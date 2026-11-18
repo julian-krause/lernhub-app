@@ -1,0 +1,14 @@
+node_modules/
+.DS_Store
+
+# gebaute App und erzeugte Symbole (scripts/build-app.sh baut sie aus build/icon/lernhub.svg)
+build/Lernhub.app/
+build/icon/lernhub.iconset/
+build/icon/lernhub.svg.png
+build/icon/lernhub.icns
+
+# eigene Sprachaufnahme für den Live-Test des Diktierens
+tests/audio/
+
+# eigenes Semester und Kurs für die Tests
+tests/lokal.json

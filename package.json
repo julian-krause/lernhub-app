@@ -1,0 +1,21 @@
+{
+  "name": "lernhub",
+  "productName": "Lernhub",
+  "version": "2.0.0",
+  "description": "Lernhub als Mac-App: Lernen im Gespräch und Wiederholen je Kurs, Wochenpensum, Fortschritt, Lernzeit, Kalender und ILIAS-Sync.",
+  "main": "src/main/main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test": "node tests/e2e.mjs && node tests/lernen.test.mjs && node tests/ueben.test.mjs && node tests/sync.test.mjs",
+    "test:lernen": "node tests/lernen.test.mjs",
+    "test:ueben": "node tests/ueben.test.mjs",
+    "test:sync": "node tests/sync.test.mjs",
+    "test:live": "node tests/ueben-diktat-live.mjs",
+    "app": "bash scripts/build-app.sh"
+  },
+  "devDependencies": {
+    "electron": "44.4.1",
+    "playwright-core": "^1.56.0"
+  }
+}
