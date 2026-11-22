@@ -11,7 +11,7 @@ export const S = {
   lern: {},              // Lernen: Kursschlüssel → { sitzung, ziel } (aus dem Hauptprozess)
   ueb: {},               // Wiederholen: Kursschlüssel → Sitzung
   lernLauf: false,       // Lernen von „Diese Woche“ aus: nach jeder Lektion die nächste über alle Kurse
-  lauf: null,            // Wiederholen als Endloslauf über alle Kurse (js/ueben.js)
+  lauf: null,            // Wiederholen als Endloslauf über alle Kurse (js/ueben.js), mit kurz: „Nur 5 Minuten“
   sync: { zustand: 'aus', schritte: [] },   // ILIAS-Sync (js/sync.js)
   frueherOffen: {},      // Kursseite: „Frühere Wochen“ aufgeklappt (Kursschlüssel → true)
 };

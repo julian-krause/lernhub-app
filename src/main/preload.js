@@ -38,6 +38,9 @@ contextBridge.exposeInMainWorld('lernhub', {
   diktatStart: () => ipcRenderer.invoke('diktat:start'),
   diktatTon: (buf) => ipcRenderer.send('diktat:ton', buf),
   diktatStopp: () => ipcRenderer.invoke('diktat:stopp'),
+  spielLaden: () => ipcRenderer.invoke('spiel:laden'),
+  spielSpeichern: (stand) => ipcRenderer.invoke('spiel:speichern', stand),
+  mitteilung: (x) => ipcRenderer.invoke('mitteilung', x),
   on: {
     datenGeaendert: hoeren('daten:geaendert'),
     fokus: hoeren('fenster:fokus'),

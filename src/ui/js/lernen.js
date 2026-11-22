@@ -7,10 +7,12 @@
 //   - Rechts: der Plan dieser Lektion mit Lektionsuhr und die Roadmap des Kurses.
 //   - Diktieren: Mikrofon im Feld oder ⌘⇧L (Deepgram, Kanal diktat:* wie in der Übungsansicht).
 // Die Sitzung läuft im Hauptprozess (src/main/lernen.js, claude -p); hier nur Anzeige und Eingaben.
-import { esc, ico, cc, n_, $, pd, fDM, addDays, isoWeek } from './util.js';
+import { esc, ico, cc, n_, $, pd, fDM, addDays, isoWeek, flamme } from './util.js';
 import { S } from './state.js';
 import { md } from './ueben.js';
 import * as A from './aufnahme.js';
+import * as Sp from './spiel.js';
+import { ton } from './effekte.js';
 
 const L = window.lernhub;
 let hooks = { toast: () => {}, zeichnen: () => {}, nav: () => {}, geaendert: () => {} };
@@ -20,6 +22,10 @@ const sicher = {};             // Kursschlüssel → sicher | unsicher | geraten
 const gesehen = {};            // Kursschlüssel → Zahl der Verlaufseinträge beim letzten Zeichnen (fürs Scrollen)
 let uhr = null;
 const D = { zustand: 'aus', interim: '', kurs: null, text: '' };
+// Spiel: Rückmeldung zu Fragen, die du in dieser Ansicht beantwortet hast (<Sitzung>:f<nr> → { text, art }),
+// und was beim nächsten Zeichnen einmal aufleuchten soll (Puls, Wackeln, „+n XP“)
+const rueck = {};
+const einmal = new Set();
 
 export function init(h) { hooks = { ...hooks, ...h }; }
 
@@ -107,7 +113,7 @@ export function karte() {
     <div class="modus-t">${esc(d.id)} · ${esc(d.title)}</div>
     <div class="modus-m" title="${esc(d.sources || '')}">${esc(d.sitzung ? standText(d.sitzung) : zielMeta(d))}</div>
     <div class="lauf-in"><div class="lauf-kurse">${chips}</div><span class="sp"></span>
-      <button class="btn primary" data-lernen="lauf">${ico('play')}${d.sitzung ? 'Weiterlernen' : 'Los'}</button></div>
+      <button class="btn los haupt" data-lernen="lauf">${ico('play')}${d.sitzung ? 'Weiterlernen' : 'Los'}</button></div>
     <p class="muted mini">Start mit ${esc(x.c.short)}, ${esc(warum(x))}. Nach jeder Lektion schlägt Lernhub die nächste vor. Ein Klick auf einen Kurs lernt dort.</p></div>`;
 }
 
@@ -121,7 +127,7 @@ export function kursKarte(c) {
     <div class="modus-t">${esc(d.id)} · ${esc(d.title)}</div>
     <div class="modus-m" title="${esc(d.sources || '')}">${esc(s ? standText(s) : [d.chapter ? 'Kap. ' + d.chapter : '', d.sources || '', d.training ? 'Klausurtraining' : ''].filter(Boolean).join(' · ') || 'nächste Lektion der Roadmap')}</div>
     ${s ? `<div class="lrn-uhr"><span class="bar"><i style="width:${Math.min(100, Math.round(minuten(s) / s.budget * 100))}%"></i></span></div>` : ''}
-    <div class="acts"><button class="btn primary" data-lernen="kurs|${esc(c.key)}">${ico('play')}${s ? 'Weiterlernen' : 'Lernen starten'}</button></div></div>`;
+    <div class="acts"><button class="btn los haupt" data-lernen="kurs|${esc(c.key)}">${ico('play')}${s ? 'Weiterlernen' : 'Lernen starten'}</button></div></div>`;
 }
 
 // Ein Klick lernt: zur Ansicht wechseln, eine laufende Sitzung fortsetzen, sonst die nächste Lektion starten.
@@ -160,6 +166,9 @@ function frageKarte(c, s, q) {
   else if (q.aufgedeckt && q.rolle === 'abruf') chip = `<span class="chip ${q.korrekt ? 'ok' : 'bad'}">${q.korrekt ? 'Richtig' : 'Falsch'}</span><span class="chip">zählt nicht</span>`;
   else if (q.aufgedeckt) chip = q.urteil === 'teils' ? '<span class="chip warn">Teils richtig</span>' : q.korrekt ? '<span class="chip ok">Richtig</span>' : '<span class="chip bad">Falsch</span>';
   else if (q.beantwortet) chip = '<span class="chip">wird bewertet …</span>';
+  const key = `${s.id}:f${q.nr}`, gebucht = q.aufgedeckt && !q.ersetzt ? Sp.gebuchtVon(s.id, 'f', q.nr) : null;
+  chip += Sp.xpChip(gebucht);
+  const jetzt = einmal.delete(key), rm = rueck[key];
   const a = q.antwort || {};
   let rumpf = '';
   if (!q.frei) {
@@ -169,6 +178,7 @@ function frageKarte(c, s, q) {
       if (gew === i) kl.push('gew');
       if (q.aufgedeckt && q.richtig === i) kl.push('richtig');
       if (q.aufgedeckt && a.wahl === i && q.richtig !== i) kl.push('falsch');
+      if (jetzt && q.aufgedeckt && q.rolle !== 'vorhersage') kl.push(q.richtig === i && a.wahl === i ? 'puls' : a.wahl === i ? 'wackeln' : '');
       const inhalt = `<span class="lrn-b">${BUCHSTABE(i)}</span><span class="ueb-prose sel">${md(o)}</span>`;
       return offen ? `<button class="${kl.join(' ')}" data-lrn-opt="${i}" title="Taste ${i + 1}">${inhalt}</button>` : `<div class="${kl.join(' ')}">${inhalt}</div>`;
     }).join('')}</div>`;
@@ -177,8 +187,10 @@ function frageKarte(c, s, q) {
     rumpf = a.weissNicht ? '<p class="ueb-leise">Du hast „Weiß ich nicht“ gewählt.</p>' : '';
     if (q.aufgedeckt && q.loesung) rumpf += `<div class="lrn-loesung"><div class="ueb-eyebrow">Lösung</div><div class="ueb-prose sel">${md(q.loesung)}</div></div>`;
   } else rumpf = '<p class="ueb-leise">Freie Antwort: unten ins Feld schreiben.</p>';
+  if (rm) rumpf += `<p class="lrn-lob ${rm.art}${jetzt ? ' neu' : ''}">${rm.art === 'ok' ? flamme(rm.combo >= 3 ? 'jubelnd' : 'froh', 22) : ico(rm.art === 'teils' ? 'star' : 'sparkles')}<span>${esc(rm.text)}</span></p>`;
+  const flug = jetzt && gebucht ? `<span class="xp-flug" aria-hidden="true">+${gebucht.xp} XP</span>` : '';
   const erkl = q.aufgedeckt && q.erklaerung ? `<div class="ueb-trenner"></div><div class="ueb-eyebrow">Erklärung</div><div class="ueb-prose sel">${md(q.erklaerung)}</div>` : '';
-  return `<div class="ueb-karte lrn-frage${offen ? ' offen' : ''}" data-frage="${q.nr}"><div class="ueb-eyebrow">${titel} ${chip}</div>
+  return `<div class="ueb-karte lrn-frage${offen ? ' offen' : ''}" data-frage="${q.nr}">${flug}<div class="ueb-eyebrow">${titel} ${chip}</div>
     <div class="ueb-prose ueb-gross sel">${md(q.frage)}</div>${rumpf}${erkl}</div>`;
 }
 
@@ -214,9 +226,16 @@ function zeile(c, s, e) {
 }
 
 function denktZeile(s) {
-  const sek = Math.max(0, Math.round((Date.now() - (s.seit || Date.now())) / 1000));
-  const was = !s.verlauf.length ? 'liest das Material und plant die Lektion (kann eine Minute dauern)' : 'denkt';
-  return `<div class="ueb-denkt"><span class="ueb-punkte"><i></i><i></i><i></i></span>Claude ${was} <span class="muted num" data-lrn-sek>${sek} s</span></div>`;
+  const was = !s.verlauf.length ? 'liest das Material und plant die Lektion' : 'denkt';
+  return Sp.warten(s, { art: 'lernen', was, sek: 'data-lrn-sek' });
+}
+
+// Fokus-Modus: Balken unter dem Kopf, ein Segment je Schritt des Plans, die Uhr klein daneben
+function fokusLeiste(c, s) {
+  if (!Sp.fokusAn() || !s) return '';
+  const n = s.plan && s.plan.length ? s.plan.length : 0, m = minuten(s);
+  const seg = n ? s.plan.map((t, i) => `<i class="${i + 1 < s.schritt ? 'done' : i + 1 === s.schritt ? 'jetzt' : ''}" title="${esc(`${i + 1}. ${t}`)}"></i>`).join('') : '<i class="leer"></i>';
+  return `<div class="fokus-leiste" style="${cc(c)}"><div class="fokus-seg">${seg}</div><span class="muted num fokus-uhr" data-lrn-uhr2>${m} / ${s.budget} Min.</span></div>`;
 }
 
 // ---------------------------------------------------------------- Seitenspalte: Plan und Roadmap
@@ -260,13 +279,14 @@ export function ansicht(c) {
   const offen = s && s.zustand !== 'erledigt' && s.zustand !== 'traegtEin';
   const kopf = `<header class="head drag"><span class="crumb"><span class="nodrag" style="${cc(c)}"><span class="dot" style="display:inline-block;margin-right:7px"></span></span>${esc(c.name)} · Lernen</span>
     ${s ? `<span class="chip acc">${ico('grad')}Lektion ${esc(s.lektion.id)}</span>` : ''}${s && S.lernLauf ? '<span class="chip" title="Nach jeder Lektion schlägt Lernhub die nächste vor, nach dem Plan über alle Kurse">nach Plan</span>' : ''}
-    <span class="sp"></span>
+    ${s ? Sp.comboChip(Sp.comboLernen(s)) : ''}
+    <span class="sp"></span>${Sp.fokusKnopf()}
     ${offen && !s.abschluss && s.stat.gestellt ? `<button class="btn sm" data-lrn="ende" ${s.zustand === 'denkt' ? 'disabled' : ''} title="Claude fasst zusammen, danach kannst du die Lektion abschließen">${ico('flag')}Lektion beenden</button>` : ''}
     ${offen ? `<button class="btn sm ghost" data-lrn="verwerfen" title="Sitzung verwerfen, nichts wird eingetragen">${ico('x')}Abbrechen</button>` : ''}
     <button class="btn sm ghost" data-nav="kurs:${c.slug}">${ico('arrowLeft')}Zum Kurs</button></header>`;
   const seite = `<aside class="lrn-seite" style="${cc(c)}">${s ? planBox(c, s) : ''}${roadmapBox(c, s ? s.lektion.id : z.id)}</aside>`;
   if (!s) return kopf + `<div class="lrn-layout"><div class="lrn-haupt"><div class="view">${start(c, z)}</div></div>${seite}</div>`;
-  return kopf + `<div class="lrn-layout"><div class="lrn-haupt"><div class="view ueb-view" id="lrn-view"><div class="ueb-wrap" style="${cc(c)}">
+  return kopf + fokusLeiste(c, s) + `<div class="lrn-layout"><div class="lrn-haupt"><div class="view ueb-view" id="lrn-view"><div class="ueb-wrap" style="${cc(c)}">
     <div class="ueb-verlauf">${s.verlauf.map((x) => zeile(c, s, x)).join('')}
     ${s.zustand === 'denkt' ? denktZeile(s) : ''}
     ${s.zustand === 'fehler' ? `<div class="note"><span>${ico('alert')}</span><span>Claude hat nicht geantwortet: ${esc(s.fehler || '')}</span><span class="sp"></span><button class="btn sm" data-lrn="nochmal">${ico('refresh')}Nochmal versuchen</button></div>` : ''}
@@ -280,7 +300,7 @@ function start(c, z) {
     <h1 class="title">${kann ? `${esc(z.id)} · ${esc(z.title)}` : 'Gerade nichts zu lernen'}</h1>
     ${kann ? `<p class="muted">ca. ${z.budget} Min.${z.chapter ? ' · Kap. ' + esc(z.chapter) : ''}${z.sources ? ' · ' + esc(z.sources) : ''}${z.training ? ' · Klausurtraining' : ''}</p>
     <p class="ueb-prose">Claude bringt dir diese Lektion im Gespräch bei: ein kleiner Schritt, dann eine Frage, deine Antwort, dann der nächste Schritt. Der Stoff sind genau die Folien und Übungen, die in der Roadmap zu dieser Lektion stehen. Am Ende trägst du sie mit „Lektion abschließen“ ein, und die Roadmap rückt weiter.</p>
-    <div class="acts"><button class="btn primary" data-lrn="start">${ico('play')}Lektion starten</button></div>
+    <div class="acts"><button class="btn los haupt" data-lrn="start">${ico('play')}Lektion starten</button></div>
     <p class="muted klein">Nach dem Abschluss entsteht ein Merkblatt mit dem Kern jedes Schritts, daraus übt „Wiederholen“. Du kannst jederzeit unterbrechen und später weitermachen.</p>`
     : `<p class="ueb-prose">${esc(z.grund || 'Keine Lektion gefunden.')}</p>`}
   </div></div>`;
@@ -313,7 +333,7 @@ function dock(c, s) {
       <span class="muted klein">${fertig ? esc([e.score != null ? e.score + ' %' : '', e.min ? e.min + ' Min.' : ''].filter(Boolean).join(' · ')) : ''}</span><span class="sp"></span>
       ${fertig ? `<button class="btn sm ghost" data-lrn="zurueck" title="Abschluss zurücknehmen: Die Lektion ist wieder offen">${ico('undo')}Rückgängig</button>
       ${e.datei ? `<button class="btn sm ghost" data-lrn="ansehen" title="Merkblatt dieser Lektion im Browser öffnen">${ico('book')}Merkblatt</button>` : ''}
-      ${n ? `<button class="btn ueb-naechste" data-lrn="naechste" title="${esc(`${n.d.id} ${n.d.title}`)}">Nächste Lektion${n.c.key !== c.key ? ' · ' + esc(n.c.short) : ''} →</button>`
+      ${n ? `<button class="btn ueb-naechste haupt" data-lrn="naechste" title="${esc(`${n.d.id} ${n.d.title}`)}">Nächste Lektion${n.c.key !== c.key ? ' · ' + esc(n.c.short) : ''} →</button>`
     : `<button class="btn sm" data-nav="woche">Zur Übersicht</button>`}` : ''}</div></div></div>`;
   }
   const q = offeneFrage(s);
@@ -324,15 +344,15 @@ function dock(c, s) {
       <div class="ueb-feld"><div class="ueb-eyebrow">${q.frei ? 'Deine Antwort' : 'Deine Gedanken'}</div>${feld(c, s, q.frei ? 'Antwort hier schreiben, gern mit deinem Gedankengang.' : 'Optional: laut denken. Ohne Auswahl geht der Text als Rückfrage an Claude.', q.frei ? 3 : 2)}</div>
       <div class="ueb-zeile">${mic()}<span class="muted klein">${q.frei ? '↵ sendet' : '1–' + q.optionen.length + ' wählt · ↵ sendet'}</span><span class="sp"></span>
         <button class="btn sm ghost" data-lrn="weissnicht" ${denkt ? 'disabled' : ''} title="Keine Schätzung: zählt als nicht gewusst">Weiß ich nicht</button>
-        <button class="btn primary sm" data-lrn="senden" ${denkt || k.aus ? 'disabled' : ''}>${k.text}</button></div>
+        <button class="btn los haupt" data-lrn="senden" ${denkt || k.aus ? 'disabled' : ''}>${k.text}</button></div>
     </div></div>`;
   }
   const weiter = !t.trim() && !s.abschluss && s.stat.gestellt > 0;
   return `<div class="ueb-dock" style="${cc(c)}"><div class="ueb-dock-in ueb-pause">
     ${feld(c, s, s.abschluss ? 'Noch eine Frage zur Lektion? Sonst oben „Lektion abschließen“.' : 'Fragen oder die Lektion lenken …')}
     <div class="ueb-zeile">${mic()}<span class="muted klein">${weiter ? '↵ auf leerem Feld: weiter' : '↵ sendet · ⇧↵ neue Zeile'}</span><span class="sp"></span>
-      ${weiter ? `<button class="btn ueb-naechste" data-lrn="weiter" ${denkt ? 'disabled' : ''}>Weiter →</button>`
-    : `<button class="btn primary sm" data-lrn="senden" ${denkt || !t.trim() ? 'disabled' : ''}>Senden</button>`}</div>
+      ${weiter ? `<button class="btn ueb-naechste haupt" data-lrn="weiter" ${denkt ? 'disabled' : ''}>Weiter →</button>`
+    : `<button class="btn los haupt" data-lrn="senden" ${denkt || !t.trim() ? 'disabled' : ''}>Senden</button>`}</div>
   </div></div>`;
 }
 
@@ -428,6 +448,9 @@ export function verdrahten(c, { scrollAlt = null } = {}) {
       if (sek) sek.textContent = Math.round((Date.now() - (s.seit || Date.now())) / 1000) + ' s';
       const u = document.querySelector('[data-lrn-uhr]');
       if (u) u.textContent = `${minuten(s)} / ${s.budget} Min.`;
+      const u2 = document.querySelector('[data-lrn-uhr2]');
+      if (u2) u2.textContent = `${minuten(s)} / ${s.budget} Min.`;
+      Sp.wartenTick();
     }, 1000);
   }
 }
@@ -435,6 +458,7 @@ export function verdrahten(c, { scrollAlt = null } = {}) {
 // ---------------------------------------------------------------- Daten
 export async function laden(c) {
   S.lern[c.key] = (await L.lernenStand(c.key)) || { sitzung: null, ziel: { grund: 'Kurs nicht gefunden.' } };
+  if (S.lern[c.key].sitzung) Sp.lernen(S.lern[c.key].sitzung, false);          // still nachbuchen
 }
 // Alle Kurse: laufende Sitzungen und die Lektion, die jeweils dran ist (für die Karten und die Seitenleiste)
 export async function ladenAlle() {
@@ -447,17 +471,40 @@ export async function stand(s) {
   if (!s) return;
   const e = S.lern[s.kurs] || (S.lern[s.kurs] = { sitzung: null, ziel: {} });
   const vorher = e.sitzung ? e.sitzung.zustand : null;
+  const c = S.byKey[s.kurs];
+  // live: dieselbe Sitzung war schon da, und ihre Ansicht ist offen
+  const live = !!(c && e.sitzung && e.sitzung.id === s.id && S.route.name === 'lernen' && S.route.slug === c.slug);
   if (s.zustand === 'beendet') { if (e.sitzung && e.sitzung.id === s.id) { e.sitzung = null; delete gesehen[s.kurs]; } }
   else e.sitzung = s;
-  const c = S.byKey[s.kurs];
+  const neu = s.zustand === 'beendet' ? { fragen: [] } : Sp.lernen(s, live, { ohneLevel: s.zustand === 'erledigt' });
+  if (live) rueckmelden(s, neu.fragen);
   // eingetragen oder beendet: Welche Lektion jetzt dran ist, weiß der Hauptprozess
   if (c && (s.zustand === 'beendet' || (s.zustand === 'erledigt' && vorher !== 'erledigt'))) {
-    const neu = await L.lernenStand(c.key);
-    if (neu) S.lern[c.key] = neu;
+    const x = await L.lernenStand(c.key);
+    if (x) S.lern[c.key] = x;
   }
   if (c && S.route.name === 'lernen' && S.route.slug === c.slug) hooks.zeichnen();
   else if (vorher !== s.zustand) hooks.geaendert();          // Karten und Seitenleiste zeigen den Zustand
+  if (live && s.zustand === 'erledigt' && vorher !== 'erledigt' && S.route.name === 'lernen' && S.route.slug === c.slug) {
+    Sp.feier({ s, naechste: danach(c), beiNaechste: () => aktion('naechste') });
+  }
 }
+// Frisch aufgedeckte Fragen: Ton, Puls oder Wackeln, „+n XP“, eine Zeile Lob oder Trost
+function rueckmelden(s, fragen) {
+  let klang = null;
+  for (const f of fragen) {
+    const key = `${s.id}:f${f.nr}`;
+    einmal.add(key);
+    if (f.rolle !== 'pruefung') { rueck[key] = { art: 'info', text: `Mitgemacht: +${f.xp} XP` }; continue; }
+    if (f.urteil === 'richtig') {
+      rueck[key] = { art: 'ok', combo: f.combo, text: `${Sp.lobText(f.combo, f.nr)} +${f.xp} XP${f.glueck ? ' · Glückstreffer, doppelt!' : ''}${f.combo >= 2 ? ` · ${f.combo} in Folge` : ''}` };
+      klang = klang || 'richtig';
+    } else if (f.urteil === 'teils') { rueck[key] = { art: 'teils', text: `Halb richtig. +${f.xp} XP` }; klang = klang || 'richtig'; }
+    else { rueck[key] = { art: 'bad', text: `${Sp.trostText(f.nr)} Die richtige Antwort ist markiert. +${f.xp} XP` }; klang = 'falsch'; }
+  }
+  if (klang) ton[klang]();
+}
+export const naechste = () => aktion('naechste');
 
 // ---------------------------------------------------------------- Aktionen
 const aktuell = () => (S.route.name === 'lernen' ? S.bySlug[S.route.slug] : null);
@@ -582,7 +629,7 @@ document.addEventListener('input', (e) => {
 document.addEventListener('keydown', (e) => {
   const c = aktuell(); if (!c) return;
   const s = sitzung(c); if (!s) return;
-  if (document.querySelector('.overlay')) return;
+  if (document.querySelector('.overlay, .feier')) return;
   if (e.key === 'Escape' && (D.zustand === 'laeuft' || D.zustand === 'verbindet')) { e.preventDefault(); e.stopImmediatePropagation(); diktatAus(); return; }
   if (s.zustand === 'erledigt' || s.zustand === 'traegtEin') return;
   const imFeld = e.target && e.target.id === 'lrn-text';

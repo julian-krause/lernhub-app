@@ -5,15 +5,16 @@ import * as V from './js/ansichten.js';
 import * as U from './js/ueben.js';
 import * as Ln from './js/lernen.js';
 import * as Sy from './js/sync.js';
+import * as Sp from './js/spiel.js';
 
 const L = window.lernhub;
 
 // ---------------------------------------------------------------- Meldungen
-function toast(text, art = 'ok') {
+function toast(text, art = 'ok', icon = null) {
   if (!text) return;
   const t = document.createElement('div');
-  t.className = 'toast' + (art === 'fehler' ? ' fehler' : '');
-  t.innerHTML = `${ico(art === 'fehler' ? 'alert' : 'check')}<span>${esc(text)}</span>`;
+  t.className = 'toast' + (art === 'fehler' ? ' fehler' : art === 'spiel' ? ' spiel' : '');
+  t.innerHTML = `${ico(icon || (art === 'fehler' ? 'alert' : 'check'))}<span>${esc(text)}</span>`;
   $('#toasts').appendChild(t);
   setTimeout(() => t.remove(), art === 'fehler' ? 12000 : 6500);
 }
@@ -28,6 +29,7 @@ async function laden() {
     S.alt = !!d._alt;                       // alter Stand, hub.py rechnet noch (Neues kommt per daten:geaendert)
     setDaten(d);
     await Promise.all([Ln.ladenAlle(), U.ladenAlle()]);      // laufende Sitzungen und was je Kurs dran ist
+    Sp.nachbuchen();                                          // Spielstand: still nachbuchen, Abzeichen freischalten
     S.fehler = null;
     geladenUm = Date.now();
   } catch (e) {
@@ -43,6 +45,7 @@ async function neuLaden() {
   if (pop) nachzeichnen = true;                // eine offene Pfad-Karte bleibt stehen: gezeichnet wird, wenn sie zugeht
   else if (S.route.name !== 'einstellungen') zeichnen();
   seitenleiste();
+  Sp.willkommen();                                    // falls die Daten beim Start noch fehlten
 }
 
 // ---------------------------------------------------------------- Navigation
@@ -62,9 +65,14 @@ function parse(s) {
   return name === 'kurs' ? { name, slug, tab } : { name };
 }
 
+// Fokus-Modus: In Lernen und Wiederholen verschwinden Seitenleiste und rechte Spalte (bleiben im DOM)
+function fokusSetzen() {
+  $('.app').classList.toggle('fokus', Sp.fokusAn() && MODI.includes(S.route.name));
+}
 async function zeichnen() {
   if (pop) { pop.remove(); pop = null; }
   nachzeichnen = false;
+  fokusSetzen();
   if (!S.d) {
     if (S.fehler) $('#ansicht').innerHTML = `<div class="view"><div class="leer-start"><h2>Daten noch nicht da</h2>
       <p class="muted">${esc(S.fehler)}</p><p class="muted">${S.icloud && S.icloud.zustand === 'laeuft' ? `iCloud lädt gerade ${S.icloud.fertig}/${S.icloud.gesamt} Dateien zurück auf den Mac. ` : ''}Lernhub versucht es alle 20 Sekunden erneut.</p>
@@ -94,6 +102,7 @@ async function zeichnen() {
     return;
   }
   else if (r.name === 'einstellungen') html = V.einstellungen(await L.einstellungen(true), S.info);
+  else if (r.name === 'profil') html = Sp.profil();
   else html = V.woche();
   const alt = el.querySelector('.view'), scroll = alt && S.route === zeichnen.letzte ? alt.scrollTop : 0;
   el.innerHTML = html;
@@ -157,6 +166,7 @@ function seitenleiste() {
       <span class="em">${x.denkt ? '<span class="rec" title="Claude antwortet"></span>' : ico(x.modus === 'lernen' ? 'grad' : 'target')}</span><span class="lbl">${esc(x.text)}</span></button>`).join('');
   const stand = S.d.generated ? new Date(S.d.generated) : null;
   el.innerHTML = `<div class="side-top drag"></div>
+    ${Sp.seitenKarte(r.name === 'profil')}
     <button class="side-search" data-suche>${ico('search')}<span>Suchen</span><kbd>⌘K</kbd></button>
     <div class="side-scroll">
       <button class="side-item${on('woche')}" data-nav="woche"><span class="em">${ico('sun')}</span><span class="lbl">Diese Woche</span><span class="cnt">${st.weekDone}/${st.weekQuota}</span></button>
@@ -214,6 +224,7 @@ function suche() {
     { t: 'Diese Woche', a: 'Ansicht', go: () => nav('woche'), i: 'sun' },
     { t: 'Nächster Lerntag', a: 'Ansicht', go: () => nav('lerntag'), i: 'calendar' },
     { t: 'Einstellungen', a: 'Ansicht', go: () => nav('einstellungen'), i: 'gear' },
+    { t: 'Profil', a: 'Level, Serie, Abzeichen', go: () => nav('profil'), i: 'user' },
     ...S.rc.map((c) => ({ t: c.name, a: 'Kurs', go: () => nav({ name: 'kurs', slug: c.slug }), c })),
     ...S.rc.map((c) => ({ c, d: Ln.dran(c) })).filter((x) => x.d).map(({ c, d }) => ({ t: `Lernen · ${c.short} · ${d.id} ${d.title}`, a: d.sitzung ? 'läuft' : 'Lernen', go: () => Ln.los(c), i: 'grad', c })),
     ...S.rc.filter((c) => c.done && c.practice).map((c) => ({ t: `Wiederholen · ${c.short}`, a: 'Wiederholen', go: () => U.direkt(c), i: 'target', c })),
@@ -250,6 +261,8 @@ function suche() {
 // ---------------------------------------------------------------- Klicks
 // Lernen, Wiederholen und der Sync haben eigene Knöpfe (data-lernen, data-ueben, data-lauf, data-sync) in ihren Modulen.
 document.addEventListener('click', (e) => {
+  const f = e.target.closest('[data-fokus]');
+  if (f) { Sp.fokusUmschalten(); zeichnen(); seitenleiste(); return; }
   const t = e.target.closest('[data-nav],[data-url],[data-pop],[data-suche],[data-reload]');
   if (!t) { if (pop && !e.target.closest('.pop')) schliessePop(); return; }
   if (t.dataset.suche !== undefined) return suche();
@@ -287,7 +300,7 @@ document.addEventListener('mousemove', (e) => {
 // Sitzungen ändern ihren Zustand, während eine Übersicht offen ist: Karten und Seitenleiste nachziehen
 function uebersichtNeu() {
   seitenleiste();
-  if (!S.d || !['woche', 'kurs', 'lerntag'].includes(S.route.name) || $('.overlay')) return;
+  if (!S.d || !['woche', 'kurs', 'lerntag', 'profil'].includes(S.route.name) || $('.overlay')) return;
   if (pop) nachzeichnen = true; else zeichnen();
 }
 L.on.datenGeaendert(() => neuLaden());
@@ -303,6 +316,7 @@ L.on.befehl((b) => {
   else if (b === 'wiederholen') U.laufStart();
   else if (b === 'diktat' && S.route.name === 'ueben') U.diktatUmschalten();          // ⌘⇧L: ins Feld diktieren
   else if (b === 'diktat' && S.route.name === 'lernen') Ln.diktatUmschalten();
+  else if (b === 'fokus') { Sp.fokusUmschalten(); zeichnen(); seitenleiste(); toast(Sp.fokusAn() ? 'Fokus-Modus an: nur die Lektion.' : 'Fokus-Modus aus.'); }
 });
 L.on.ueben((x) => { U.stand(x); seitenleiste(); });
 L.on.lernen((x) => Ln.stand(x).then(seitenleiste));
@@ -318,10 +332,13 @@ L.on.icloud((x) => {
   seitenleiste();
   S.info = await L.info();
   S.schluessel = (await L.einstellungen()).schluessel;
-  const hooks = { toast, nav: (r) => nav(r), zeichnen: () => zeichnen(), geaendert: uebersichtNeu };
-  U.init(hooks); Ln.init(hooks); Sy.init(hooks);
+  const hooks = { toast, nav: (r) => nav(r), zeichnen: () => zeichnen(), geaendert: uebersichtNeu, seitenleiste: () => seitenleiste() };
+  U.init(hooks); Ln.init(hooks); Sy.init(hooks); Sp.init(hooks);
+  await Sp.laden();
   await Sy.laden();
   await laden();
-  seitenleiste(); zeichnen();
+  seitenleiste(); await zeichnen();
+  Sp.willkommen();                                    // einmal: was das Spiel aus dem bisherigen Verlauf schon weiß
+  Sp.erinnern();                                      // Lernblock beginnt, Serie wird knapp
   window.__lernhubTest = { S, nav, suche };          // für die Ende-zu-Ende-Tests
 })();

@@ -17,14 +17,15 @@ Installiert: `~/Applications/Lernhub.app`. Neu bauen: `npm run app` (= `scripts/
 
 | Bereich | Inhalt |
 |---|---|
-| Seitenleiste | Suche (⌘K), „Diese Woche“, „Nächster Lerntag“, **Läuft** (offene Lektionen und Übungsrunden, ein Klick setzt sie fort), Kurse mit Wochenring (⌘1–6), Kurse ohne Roadmap, Einstellungen, Stand der Daten |
+| Seitenleiste | Spielkarte (Level, Serie, Tagesziel → Profil), Suche (⌘K), „Diese Woche“, „Nächster Lerntag“, **Läuft** (offene Lektionen und Übungsrunden, ein Klick setzt sie fort), Kurse mit Wochenring (⌘1–6), Kurse ohne Roadmap, Einstellungen, Stand der Daten |
 | Diese Woche | Karten **Lernen** und **Wiederholen** (je ein „Los“), Wochenpensum, nächster Lerntag, Fortschritt im Semester, Lernzeit, ILIAS-Sync, neue ILIAS-Dateien, übrige Claude-Aktionen (`claude-cli://`) |
 | Nächster Lerntag | Kalenderblöcke mit ihren Lektionen und „Lernen“ je Block, Pensum-Diagramm bis zur Klausur, Abgleich |
 | Kurs | Klausur, Zielnote, Fortschritt, Karten **Lernen** und **Wiederholen** für diesen Kurs, Tabs **Pfad · Liste · Material · Lücken · Notizen** |
 | Lernen | Unterricht im Gespräch, rechts der Plan der Lektion mit Uhr und die Roadmap des Kurses |
 | Wiederholen | Übungsrunde über alle erledigten Lektionen, nach LearnHarness „Üben“ |
+| Profil | Level, Lerntage-Kalender, Abzeichen, Rekorde, Einstellungen fürs Spiel (siehe „Spiel“) |
 
-Tastenkürzel: ⌘L Lernen · ⌘⇧W Wiederholen · ⌘K Suchen · ⌘0 Woche · ⌘1–6 Kurse · ⌘⇧T Lerntag · ⌘⇧L Diktieren · ⌘⇧S Plan & Kalender abgleichen · ⌘R neu laden · ⌘, Einstellungen.
+Tastenkürzel: ⌘L Lernen · ⌘⇧W Wiederholen · ⌘K Suchen · ⌘0 Woche · ⌘1–6 Kurse · ⌘⇧T Lerntag · ⌘⇧L Diktieren · ⌘⇧F Fokus-Modus · ⌘⇧S Plan & Kalender abgleichen · ⌘R neu laden · ⌘, Einstellungen.
 
 Auf der Kursseite klappen frühere, ganz erledigte Wochen ein („Frühere Wochen“): Die Seite beginnt mit den beiden Karten und der laufenden Woche. Eine erledigte Lektion hat „Merkblatt“; die Datei öffnet sich im Browser.
 
@@ -63,6 +64,28 @@ Geübt werden **alle bisherigen Inhalte**, nach dem Übungsmodus der LearnHarnes
   - Je Kurs gibt es eine Runde. Sie liegt in `userData/ueben/<id>.json` und läuft nach einem Neustart weiter; nach 30 Tagen wird sie gelöscht.
 - **Endloslauf über alle Kurse:** Lernhub übt Serien von 3 bis 6 Aufgaben je Kurs (mindestens 2, wenn dort kaum etwas fällig ist; die Serie endet erst auf einer sauber gelösten Aufgabe, `serieUm`); danach wechselt „Nächste Aufgabe · <Kurs> →“ (↵) von selbst zum Kurs mit dem höchsten Bedarf (fällige Themen + 3 × offene Lücken + Abstand zum Zielschnitt / 10 + Klausurnähe, geteilt durch 1 + Aufgaben in diesem Lauf). Die Runde eines Kurses bleibt beim Wechsel offen, nach 12 Aufgaben beginnt sie neu. Die Runde endet nie von selbst. „Runde beenden“ schließt alle Runden des Laufs. Regeln: `kurs-tutor/UEBEN.md`.
 - **Test:** `node tests/ueben.test.mjs` (Claude-Attrappe `tests/ueben-attrappe.mjs`).
+
+## Spiel
+
+Lernhub macht aus Lernen und Wiederholen ein Spiel, ohne am Unterricht etwas zu ändern: Systemprompts, Schema, Bewertung und Eintragen in `src/main/lernen.js` und `src/main/ueben.js` bleiben, wie sie sind. Die Regeln sind reine Funktionen in `src/ui/js/regeln.js` (Test: `tests/spiel.test.mjs`), den Spielstand hält `src/ui/js/spiel.js`, Töne und Konfetti stehen in `src/ui/js/effekte.js`.
+
+- **XP:** Eine Lektion bringt 40 bis 100 XP nach Genauigkeit, fehlerfrei 120. Eine Prüffrage bringt 10 XP plus bis zu 10 für die Combo, teils richtig 5, falsch 2, „Weiß ich nicht“ 1; Vorhersagen bringen 3 XP fürs Mitmachen. Jede richtige Prüffrage ist mit 1/8 ein Glückstreffer (doppelte XP). Beim Wiederholen: gelöst 20 (+ Combo), mit Hinweisen 12, aufgegeben 5. Für „Sicher“ gibt es keine XP, Leben oder Herzen gibt es nicht.
+- **Level und Rang:** Level L ab 50·L·(L−1) XP, Ränge von Funke bis Supernova.
+- **Wochenserie statt Tagesserie:** Lerntage je Woche (3 bis 6, im Profil). Ein Lerntag ist eine abgeschlossene Lektion, 5 Min. Wiederholen oder 40 XP. Ferienwochen (`semester.breaks`) unterbrechen die Serie nicht.
+- **Tagesziel und Tagesquests:** Tagesziel 100, 200, 400 oder 700 XP (+20 XP Bonus). Jeden Tag drei Quests (Lernen, Wiederholen, Können); sind alle drei geschafft, öffnet sich die Truhe (+30 XP).
+- **Abzeichen:** 28 Stück, aus Fakten berechnet (Lektionen, Serie, Combo, gelöste Aufgaben, Tagesziele, Level, Kursanteil, früh und spät). Was der bisherige Verlauf schon hergibt, wird beim ersten Start still freigeschaltet.
+
+**Spielstand:** `spiel.json` in den App-Daten (Kanäle `spiel:laden`, `spiel:speichern`; geschrieben mit `B.schreibeAtomar`). Lektions-XP werden nie gebucht, sondern aus der Roadmap gerechnet, so nimmt „Rückgängig“ sie von selbst weg. Eine gerade eingetragene Lektion zählt bis zu 3 Min. aus `frisch` mit, bis `hub.py` sie kennt. Prüffragen und Aufgaben stehen genau einmal in `gebucht` (`<Sitzung>:f<nr>`, `<Sitzung>:a<nr>`, 45 Tage), auf dem Tag ihres Zeitstempels. Beim Start und beim ersten Laden einer Sitzung wird still nachgebucht; Ton, Konfetti und Feier gibt es nur, wenn sich etwas ändert, während die Ansicht offen ist.
+
+**Auf dem Bildschirm:**
+- *Lernen:* Nach einer Antwort Ton, grüner Puls oder Wackeln, „+n XP“, eine Zeile Lob oder Trost; jede aufgedeckte Fragekarte behält ihren XP-Chip, die Combo steht im Kopf. Beim Warten füllt sich ein Balken über die erwartete Dauer (Mittel der bisherigen Züge, sonst 12 s, im ersten Zug 45 s mit Tipps). Nach „Lektion abschließen“ kommt die **Feier**: Sterne, Genauigkeit, Zeit, XP, Level-Balken, Konfetti, Vorschau; ↵ = „Nächste Lektion →“, Esc schließt.
+- *Fokus-Modus* (Standard in Lernen und Wiederholen, ⌘⇧F oder „Fokus“ im Kopf): Seitenleiste und rechte Spalte verschwinden, unter dem Kopf ein Balken mit einem Segment je Schritt des Plans.
+- *Wiederholen:* dasselbe Feedback auf der Abschlusskarte, Konfetti-Stoß bei „Gelöst“. **Nur 5 Minuten** auf der Startseite startet den Endloslauf mit einem Ring über 5 Minuten; ist die Zeit um, endet die laufende Aufgabe in Ruhe, dann kommen Ergebnis und „Noch 5?“.
+- *Seitenleiste:* Karte mit Flamme, Level, Rang, XP-Balken, Serie und Tagesziel-Ring; ein Klick öffnet das **Profil** (Kalender der letzten 12 Wochen, Abzeichen, Rekorde, Einstellungen: Tagesziel, Lerntage, Töne, Fokus-Modus, Erinnerungen).
+- *Diese Woche:* Leiste mit Tagesziel, Wochenpunkten Mo–So, Serie und Level, darunter die Tagesquests mit Truhe. Die Karte „Wiederholen“ nennt die Portion für heute (fällig plus offene Lücken, höchstens 8, minus heute Geübtes).
+- *Pfad der Kursseite:* Sterne unter erledigten Lektionen, eine hüpfende Blase „START“ über der, die dran ist, Klausurtraining als Boss-Knoten, eine Truhe am Wochenziel.
+- *Erinnerungen:* Mitteilung, wenn heute ein Lernblock aus dem Kalender beginnt, und abends ab 19 Uhr, wenn die Wochenserie knapp wird (im Test aus).
+- Einmal zur Begrüßung zeigt Lernhub den Stand aus dem bisherigen Verlauf. Maskottchen ist eine Flamme mit Gesicht (froh, müde, jubelnd). Töne sind leise WebAudio-Oszillatoren; unter „Bewegung reduzieren“ bewegt sich nichts.
 
 ## Diktieren
 
@@ -112,6 +135,7 @@ Lernhub rechnet nichts selbst. Quelle bleibt `roadmap.json` je Kurs. Den Studien
 | `src/ui/js/ansichten.js` | Diese Woche, Lerntag, Kurs, Einstellungen |
 | `src/ui/js/lernen.js`, `ueben.js`, `sync.js` | Karten und Ansichten der beiden Modi, Sync-Karte |
 | `src/ui/js/aufnahme.js` | Mikrofon → Hauptprozess (Diktieren) |
+| `src/ui/js/regeln.js`, `spiel.js`, `effekte.js` | Spielregeln (rein), Spielstand und Spiel-Oberfläche, Töne und Konfetti |
 
 ## Tests
 
@@ -120,11 +144,13 @@ Alle Tests laufen auf einer Kopie des Semesters (nur Lernbereiche und Einstellun
 Welches Semester und welchen Kurs die Tests kopieren, steht in `tests/lokal.json` (nicht im Repo): `{ "root": "<Studienordner>", "semester": "<Ordner des Semesters>", "kurs": "<Kursordner>" }`, oder in `LERNHUB_TEST_ROOT`, `LERNHUB_TEST_SEMESTER`, `LERNHUB_TEST_KURS`. Ohne Angabe nehmen sie den Studienordner der Skill, das höchste Semester mit Roadmaps und den ersten Kurs mit mindestens fünf erledigten und zwei offenen Lektionen.
 
 ```bash
-npm test                         # alle vier:
-node tests/e2e.mjs               #   Übersicht: Karten, Pensum, Kursseite, Pfad, Liste, Lücken, Lerntag, Einstellungen, Suche, „Los“
-node tests/lernen.test.mjs       #   Lernen: Gespräch, Bewertung, Rückschau, Eintragen, Merkblatt, Record, nächste Lektion
-node tests/ueben.test.mjs        #   Wiederholen: Runde, Hinweis, Abschluss, Verwerfen, Endloslauf über alle Kurse
+npm test                         # alle fünf:
+node tests/spiel.test.mjs        #   Spielregeln: XP, Level, Lerntage, Wochenserie, Quests, Abzeichen (ohne Electron)
+node tests/e2e.mjs               #   Übersicht: Begrüßung, Spielkarte, Leiste, Quests, Karten, Kursseite, Pfad, Liste, Lücken, Lerntag, Profil, Einstellungen, Suche, „Los“, Fokus-Modus
+node tests/lernen.test.mjs       #   Lernen: Gespräch, Bewertung, XP und Combo, Rückschau, Eintragen, Feier, spiel.json, Merkblatt, Record, nächste Lektion
+node tests/ueben.test.mjs        #   Wiederholen: Runde, Hinweis, Abschluss mit XP, Verwerfen, Endloslauf über alle Kurse, „Nur 5 Minuten“
 node tests/sync.test.mjs         #   ILIAS-Sync: Freigaben, Fortschritt, Ergebnis, fehlende Zugangsdaten, Abbrechen
+E2E_BILDER=<Ordner> npm test    # legt dazu Bildschirmfotos ab (Übersicht, Lernen mit Feier, Wiederholen)
 npm run test:live                # Diktieren mit gebauter App und echtem Deepgram (braucht gespeicherten Schlüssel und eine eigene Aufnahme tests/audio/diktat.wav, die nicht im Repo liegt)
 LERNHUB_APP=~/Applications/Lernhub.app/Contents/MacOS/Electron node tests/e2e.mjs   # Übersicht gegen die gebaute App
 ```

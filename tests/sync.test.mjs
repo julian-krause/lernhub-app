@@ -6,7 +6,7 @@ import { createRequire } from 'module';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { bereiten, check, warte } from './umgebung.mjs';
+import { bereiten, check, warte, willkommenZu } from './umgebung.mjs';
 
 const U = bereiten();
 const LOG = path.join(U.T, 'attrappe.jsonl'), MODUS = path.join(U.T, 'modus');
@@ -39,6 +39,7 @@ const zuege = () => fs.readFileSync(LOG, 'utf8').trim().split('\n').map((z) => J
 
 try {
   await win.waitForSelector('#sync', { timeout: 40000 });
+  await willkommenZu(win);
   check(/ILIAS-Sync/.test(await text('#sync h3')) && (await win.$('#sync [data-sync="start"]')) !== null, 'Diese Woche: Karte „ILIAS-Sync“ mit „Sync starten“');
   check((await win.$('#sync [data-url^="claude-cli:"]')) !== null, 'Ausweg für Rückfragen bleibt: „In Claude Code“');
   const kalVorher = U.kalenderAufrufe().length;

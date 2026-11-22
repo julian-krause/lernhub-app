@@ -248,6 +248,22 @@ function ipc() {
     try { return await diktatStart(); } catch (err) { an('diktat:status', { zustand: 'fehler', text: err.message }); return { ok: false, text: err.message }; }
   });
   ipcMain.handle('diktat:stopp', () => diktatStopp());
+
+  // Spielstand (XP, Serie, Quests, Abzeichen, Einstellungen des Spiels): spiel.json in den App-Daten
+  const spielDatei = () => path.join(app.getPath('userData'), 'spiel.json');
+  ipcMain.handle('spiel:laden', () => { try { return JSON.parse(fs.readFileSync(spielDatei(), 'utf8')); } catch { return null; } });
+  ipcMain.handle('spiel:speichern', (e, stand) => {
+    if (!stand || typeof stand !== 'object' || stand.v !== 1) return false;
+    try { B.schreibeAtomar(spielDatei(), JSON.stringify(stand)); return true; } catch (err) { console.error('spiel.json:', err.message); return false; }
+  });
+  // Erinnerungen (Lernblock beginnt, Serie wird knapp): Mitteilung wie beim ILIAS-Sync
+  ipcMain.handle('mitteilung', (e, x) => {
+    if (process.env.LERNHUB_TEST || !x || !Notification.isSupported()) return false;
+    const n = new Notification({ title: String(x.titel || 'Lernhub').slice(0, 80), body: String(x.text || '').slice(0, 220), silent: false });
+    n.on('click', () => { if (win) { win.show(); win.focus(); if (x.nav) an('nav', x.nav); } });
+    n.show();
+    return true;
+  });
 }
 
 // ---------------------------------------------------------------- Fenster
@@ -290,6 +306,8 @@ function menue() {
       { label: 'Lernen starten', accelerator: 'CmdOrCtrl+L', click: sende('befehl', 'lernen') },
       { label: 'Wiederholen starten', accelerator: 'CmdOrCtrl+Shift+W', click: sende('befehl', 'wiederholen') },
       { label: 'Diktieren an/aus', accelerator: 'CmdOrCtrl+Shift+L', click: sende('befehl', 'diktat') },
+      { label: 'Fokus-Modus an/aus', accelerator: 'CmdOrCtrl+Shift+F', click: sende('befehl', 'fokus') },
+      { label: 'Profil', click: sende('nav', { name: 'profil' }) },
       { type: 'separator' },
       { label: 'Plan & Kalender abgleichen', accelerator: 'CmdOrCtrl+Shift+S', click: () => kurstutor('kurstutor://sync').catch(() => { }) },
       { label: 'Lernkalender öffnen', click: () => kurstutor('kurstutor://kalender' + (daten && daten.agenda ? '?date=' + daten.agenda.date : '')).catch(() => { }) },

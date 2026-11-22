@@ -101,6 +101,26 @@ export function check(ok, text) {
   return ok;
 }
 
+// Fokus-Modus (Standard in Lernen und Wiederholen): Seitenleiste ist ausgeblendet. Prüft das und schaltet ihn aus,
+// damit der Test wieder über die Seitenleiste navigieren kann. Gibt zurück, ob sie vorher wirklich weg war.
+export async function fokusAus(win) {
+  const weg = await win.$eval('#sidebar', (el) => getComputedStyle(el).display === 'none' && el.querySelectorAll('.side-item').length > 0);
+  const app = await win.$eval('.app', (a) => a.classList.contains('fokus'));
+  await win.click('[data-fokus]');
+  await win.waitForSelector('#sidebar .side-item', { state: 'visible' });
+  return weg && app;
+}
+
+// Beim ersten Start (leere App-Daten) begrüßt Lernhub einmal mit dem Spielstand. Schließt die Begrüßung und gibt
+// ihren Text zurück.
+export async function willkommenZu(win) {
+  await win.waitForSelector('.willkommen [data-willkommen]', { timeout: 40000 });
+  const t = await win.$eval('.willkommen', (el) => el.textContent);
+  await win.click('.willkommen [data-willkommen]');
+  await win.waitForSelector('.willkommen', { state: 'detached' });
+  return t;
+}
+
 export async function warte(fn, { timeout = 20000, schritt = 250, text = 'Bedingung' } = {}) {
   const t0 = Date.now();
   for (;;) {

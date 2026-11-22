@@ -2,9 +2,11 @@
 // Gelernt wird in zwei Modi mit eigener Ansicht: „Lernen“ (js/lernen.js) und „Wiederholen“ (js/ueben.js).
 import { esc, ico, pd, fDM, fDMY, fWTL, addDays, isoWeek, cc, n_ } from './util.js';
 import { S, aktionen, aktion } from './state.js';
+import { sterne } from './regeln.js';
 import * as Ln from './lernen.js';
 import * as U from './ueben.js';
 import * as Sy from './sync.js';
+import * as Sp from './spiel.js';
 
 // Zustand einer Roadmap-Lektion für die Anzeige: erledigt, offen (geplant) oder wartet auf Material
 const zustand = (l) => (l.state === 'erledigt' ? 'erledigt' : l.state === 'Material folgt' ? 'ph' : 'geplant');
@@ -127,7 +129,9 @@ export function woche() {
     `<div class="view"><div class="wrap stack">
     <div><h1 class="title">${gruss}${d.name ? ', ' + esc(d.name) : ''}</h1>
       <p class="sub">KW ${isoWeek(mon)} · ${fDM(mon)}–${fDM(addDays(mon, 6))} · ${esc(d.semester.title)}${wochenBis != null ? ` · noch ${wochenBis} Wochen bis zu den Prüfungen` : ''}</p></div>
+    ${Sp.leiste()}
     ${hinweise()}
+    ${Sp.questKarte()}
     <div class="modi">${Ln.karte()}${U.laufKarte()}</div>
     <div class="grid2">${pensum}${lt}</div>
     ${fort}
@@ -294,13 +298,17 @@ function pfad(c) {
     const nodes = ls.map((l) => {
       const x = ZICK[i++ % ZICK.length];
       const jetzt = !!dran && dran.id === l.id;
-      const icon = l.state === 'erledigt' ? 'check' : jetzt ? 'play' : l.training ? 'target' : 'book';
-      return `<div class="pnode ${jetzt ? 'jetzt' : zustand(l)} ${x > 0 ? 'left' : ''}" style="--x:${x}px">
-        <button class="ball" data-pop="${esc(c.key)}|${esc(l.id)}" title="${esc(l.id)} ${esc(l.title)}">${ico(icon)}</button>
+      const icon = l.state === 'erledigt' ? 'check' : jetzt ? 'play' : l.training ? 'crown' : 'book';
+      // Spiel: Sterne unter erledigten Lektionen, eine hüpfende Blase über der, die dran ist, Klausurtraining als Boss
+      const n = l.state === 'erledigt' ? sterne(l.score) : 0;
+      const st = l.state === 'erledigt' && l.score != null ? `<span class="psterne" title="${l.score} %">${[1, 2, 3].map((k) => `<span class="${k <= n ? 'an' : ''}">${ico('star')}</span>`).join('')}</span>` : '';
+      return `<div class="pnode ${jetzt ? 'jetzt' : zustand(l)}${l.training ? ' boss' : ''} ${x > 0 ? 'left' : ''}" style="--x:${x}px">
+        ${jetzt ? `<span class="pstart" aria-hidden="true">${dran.sitzung ? 'WEITER' : 'START'}</span>` : ''}
+        <button class="ball" data-pop="${esc(c.key)}|${esc(l.id)}" title="${esc(l.id)} ${esc(l.title)}${l.training ? ' · Klausurtraining' : ''}">${ico(icon)}</button>${st}
         <div class="plab"><b>${esc(l.id)} · ${esc(l.title)}</b><span>${jetzt ? (dran.sitzung ? 'läuft · ' : 'als Nächstes · ') : ''}${esc(kurzMeta(l))}</span></div></div>`;
     }).join('');
     return `<section class="psec ${w === mon ? 'cur' : ''}"><div class="psec-h"><b>${wocheTitel(w)}${w === mon ? ' · diese Woche' : ''}</b><span>${dn}/${ls.length}</span></div>${nodes}
-      <div class="pflag">${ico('flag')}Wochenziel</div></section>`;
+      <div class="ptruhe${dn === ls.length ? ' offen' : ''}" title="${dn === ls.length ? 'Wochenziel geschafft' : `Wochenziel: noch ${ls.length - dn} offen`}">${ico(dn === ls.length ? 'chestOpen' : 'chest')}<span>Wochenziel${dn === ls.length ? ' geschafft' : ` · ${dn}/${ls.length}`}</span></div></section>`;
   });
   return `<div class="path">${secs}<div class="ptrophy">${ico('trophy')}Klausur am ${fDMY(pd(c.exam))}</div></div>`;
 }

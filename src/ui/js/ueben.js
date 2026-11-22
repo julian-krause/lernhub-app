@@ -8,9 +8,11 @@
 //   - In der Pause das normale Eingabefeld für Fragen; leer wird der Knopf zu „Nächste Aufgabe →“.
 //   - Diktieren: Mikrofon im Feld oder ⌘⇧L (Deepgram, eigener Kanal diktat:*), Esc beendet es zuerst.
 // Die Sitzung läuft im Hauptprozess (src/main/ueben.js, claude -p); hier nur Anzeige und Eingaben.
-import { esc, ico, cc, n_, $ } from './util.js';
+import { esc, ico, cc, n_, $, flamme } from './util.js';
 import { S } from './state.js';
 import * as A from './aufnahme.js';
+import * as Sp from './spiel.js';
+import { ton, stoss } from './effekte.js';
 
 const L = window.lernhub;
 let hooks = { toast: () => {}, zeichnen: () => {}, nav: () => {}, geaendert: () => {} };
@@ -19,6 +21,10 @@ const eingeklappt = {};        // Kursschlüssel → Aufgabe im Feld eingeklappt
 let uhr = null;
 // Diktieren (Deepgram): fertige Sätze gehen ins Feld, Zwischentext darunter
 const D = { zustand: 'aus', interim: '', kurs: null, text: '' };
+// Spiel: Rückmeldung zu Aufgaben, die in dieser Ansicht abgeschlossen wurden (<Runde>:a<nr> → { text, art }),
+// und was beim nächsten Zeichnen einmal aufleuchten soll
+const rueck = {};
+const einmal = new Set();
 
 export function init(h) { hooks = { ...hooks, ...h }; }
 
@@ -72,13 +78,21 @@ export function laufKarte() {
     <p class="modus-m">Wiederholen übt, was du schon gelernt hast. Nach der ersten erledigten Lektion geht es hier los.</p></div>`;
   const war = r.filter((c) => schon(c)).map((c) => c.short);
   const ges = r.reduce((a, c) => ({ faellig: a.faellig + ((c.practice || {}).faellig || 0), luecken: a.luecken + ((c.practice || {}).luecken || 0) }), { faellig: 0, luecken: 0 });
+  const p = portion(ges);
   const chips = r.map((c) => `<button class="chip kurs-chip" style="${cc(c)}" data-ueben="kurs|${esc(c.key)}" title="${esc(c.name)}: ${esc(zahlText(c.practice || {}))}${c.avgScore != null ? ', Ø ' + c.avgScore + ' %' : ''}${sitzung(c) ? ' · Runde läuft' : ''}"><span class="dot"></span>${esc(c.short)}</button>`).join('');
   return `<div class="card modus lauf" id="modus-wiederholen" style="${cc(r[0])}">${kopf}
     <div class="modus-k"><span class="dot"></span>${esc(r[0].name)} zuerst</div>
-    <div class="modus-t">${n_(ges.faellig, 'Thema', 'Themen')} fällig</div>
-    <div class="modus-m">${esc([`in ${n_(r.length, 'Kurs', 'Kursen')}`, ges.luecken ? n_(ges.luecken, 'offene Lücke', 'offene Lücken') : ''].filter(Boolean).join(' · '))}</div>
-    <div class="lauf-in"><div class="lauf-kurse">${chips}</div><span class="sp"></span><button class="btn primary" data-lauf="start">${ico('play')}Los</button></div>
+    <div class="modus-t">${p.offen ? `Heute dran: ${n_(p.offen, 'Aufgabe', 'Aufgaben')}` : 'Heute dran: geschafft'}</div>
+    <div class="modus-m">${esc([`${n_(ges.faellig, 'Thema', 'Themen')} fällig in ${n_(r.length, 'Kurs', 'Kursen')}`, ges.luecken ? n_(ges.luecken, 'offene Lücke', 'offene Lücken') : '', p.geuebt ? `heute ${n_(p.geuebt, 'Aufgabe', 'Aufgaben')} geübt` : ''].filter(Boolean).join(' · '))}</div>
+    <div class="lauf-in"><div class="lauf-kurse">${chips}</div><span class="sp"></span><button class="btn" data-lauf="kurz" title="Wiederholen mit einem Ring über 5 Minuten, danach siehst du, was du geschafft hast">${ico('clock')}Nur 5 Minuten</button><button class="btn primary" data-lauf="start">${ico('play')}Los</button></div>
     <p class="muted mini">Start mit ${esc(r[0].short)}${war.length ? `; heute schon dran: ${esc(war.join(', '))}` : ', weil dort am meisten offen ist'}. Nach ein paar Aufgaben wechselt Lernhub von selbst den Kurs: Was fällig oder wacklig ist, kommt öfter. Es läuft, bis du aufhörst.</p></div>`;
+}
+// Portion für heute: so viele Aufgaben, wie Themen fällig oder Lücken offen sind, höchstens 8; was heute schon
+// geübt wurde, geht davon ab
+function portion(ges) {
+  const geuebt = Object.values(heuteAlle()).reduce((a, b) => a + b, 0);
+  const soll = Math.min(8, ges.faellig + ges.luecken);
+  return { soll, geuebt, offen: Math.max(0, soll - geuebt) };
 }
 // Karte „Wiederholen“ auf der Kursseite
 export function kursKarte(c) {
@@ -138,12 +152,12 @@ async function kursStart(c) {
   let s = sitzung(c);
   if (s && s.zustand !== 'denkt' && !offeneAufgabe(s) && (s.stat || {}).aufgaben >= FRISCH) { await L.uebenBeenden(c.key); delete S.ueb[c.key]; s = null; }
   if (!s) { const r = await L.uebenStarten(c.key); if (!r.ok) hooks.toast(r.text || 'Runde nicht gestartet.', 'fehler'); s = null; }
-  if (S.lauf) { S.lauf.cur = c.key; S.lauf.ab = abschluesse(s); S.lauf.ziel = serie(c); }
+  if (S.lauf) { S.lauf.cur = c.key; S.lauf.ab = abschluesse(s); S.lauf.ziel = serie(c); if (S.lauf.kurz && S.lauf.kurz.n0 == null) S.lauf.kurz.n0 = laufGesamt(c); }
   if (s && s.zustand === 'bereit' && !offeneAufgabe(s)) { const r = await L.uebenSenden(c.key, 'weiter', ''); if (!r.ok) hooks.toast(r.text, 'fehler'); }
   hooks.zeichnen();
 }
-export async function laufStart() {
-  S.lauf = { cur: null, n: heuteAlle(), ab: 0, ziel: 3 };
+export async function laufStart({ kurz = false } = {}) {
+  S.lauf = { cur: null, n: heuteAlle(), ab: 0, ziel: 3, kurz: kurz ? kurzNeu() : null };
   S.lauf.vor = Object.values(S.lauf.n).reduce((x, y) => x + y, 0);
   const r = reihenfolge(); if (!r.length) { S.lauf = null; return; }
   await kursStart(r[0]);
@@ -163,7 +177,55 @@ async function laufEnde(c) {
   S.lauf = null;
   for (const k of andere) { await L.uebenBeenden(k); delete S.ueb[k]; }
 }
+// „Nur 5 Minuten“: derselbe Endloslauf mit einem Ring über 5 Minuten. Ist die Zeit um, endet die laufende Aufgabe in
+// Ruhe; danach kommen Ergebnis und die Frage „Noch 5?“.
+const KURZ_MS = 5 * 60000;
+const kurzNeu = () => ({ ab: Date.now(), xp0: Sp.gesamtXp(), n0: null });
+function kurzRest() { const k = S.lauf && S.lauf.kurz; return k ? Math.max(0, KURZ_MS - (Date.now() - k.ab)) : null; }
+const mmss = (ms) => { const s = Math.ceil(ms / 1000); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+function kurzRing() {
+  const r = kurzRest(); if (r == null) return '';
+  return `<span class="kurz-ring zring${r ? '' : ' voll'}" style="--p:${Math.round((1 - r / KURZ_MS) * 100)}" title="Nur 5 Minuten: Rest"><span><b class="num" data-kurz-rest>${r ? mmss(r) : 'Zeit'}</b></span></span>`;
+}
+function kurzTick() {
+  const k = S.lauf && S.lauf.kurz, c = aktuell();
+  if (!k || !c || S.route.name !== 'ueben') return;
+  const r = kurzRest(), el = document.querySelector('.kurz-ring');
+  if (el) { el.style.setProperty('--p', Math.round((1 - r / KURZ_MS) * 100)); el.classList.toggle('voll', !r); const t = el.querySelector('[data-kurz-rest]'); if (t) t.textContent = r ? mmss(r) : 'Zeit'; }
+  const s = sitzung(c);
+  if (!r && s && s.zustand !== 'denkt' && !offeneAufgabe(s) && !document.querySelector('.kurz-ende')) kurzEnde(c);
+}
+function kurzEnde(c) {
+  const k = S.lauf.kurz, n = laufGesamt(c) - (k.n0 || 0), xp = Math.max(0, Sp.gesamtXp() - k.xp0);
+  const el = document.createElement('div');
+  el.className = 'feier kurz-ende';
+  el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', '5 Minuten geschafft');
+  el.innerHTML = `<div class="feier-karte"><div class="feier-flamme">${flamme(n ? 'jubelnd' : 'froh', 72)}</div>
+    <h2 class="feier-t">5 Minuten geschafft!</h2>
+    <div class="feier-zahlen zwei" style="margin-top:14px"><div><b class="num">${n}</b><span>${n === 1 ? 'Aufgabe' : 'Aufgaben'}</span></div><div class="gold"><b class="num">+${xp}</b><span>XP</span></div></div>
+    <p class="muted" style="margin-top:12px">${n ? 'Kurz und gut: Genau so bleibt der Stoff hängen.' : 'Auch fünf Minuten Nachdenken zählen.'}</p>
+    <div class="feier-acts"><button class="btn" data-kurz="fertig">Fertig für jetzt</button><button class="btn los haupt" data-kurz="noch">Noch 5?</button></div></div>`;
+  document.body.appendChild(el);
+  const zu = (noch) => {
+    document.removeEventListener('keydown', tasten, true); el.remove();
+    if (!S.lauf) return;
+    if (noch) { S.lauf.kurz = kurzNeu(); S.lauf.kurz.n0 = laufGesamt(c); hooks.zeichnen(); }
+    else aktion('ende');
+  };
+  const tasten = (ev) => {
+    if (ev.key === 'Escape') { ev.preventDefault(); ev.stopImmediatePropagation(); zu(false); }
+    else if (ev.key === 'Enter') { ev.preventDefault(); ev.stopImmediatePropagation(); zu(true); }
+  };
+  document.addEventListener('keydown', tasten, true);
+  el.addEventListener('click', (ev) => { const b = ev.target.closest('[data-kurz]'); if (b) { ev.stopPropagation(); zu(b.dataset.kurz === 'noch'); } });
+  el.querySelector('[data-kurz="noch"]').focus({ preventScroll: true });
+  ton.geschafft();
+}
+let kurzTakt = null;
+function kurzLaufen() { clearInterval(kurzTakt); if (S.lauf && S.lauf.kurz) kurzTakt = setInterval(() => { if (!S.lauf || !S.lauf.kurz) return clearInterval(kurzTakt); kurzTick(); }, 1000); }
+
 document.addEventListener('click', (e) => {
+  if (e.target.closest('[data-lauf="kurz"]')) return laufStart({ kurz: true });
   if (e.target.closest('[data-lauf="start"]')) return laufStart();
   const b = e.target.closest('[data-ueben]');
   if (b) { const c = S.byKey[b.dataset.ueben.split('|')[1]]; if (c) direkt(c); }
@@ -208,7 +270,7 @@ const ERG = {
 };
 const MODUS = { abruf: 'Abruf', unterscheidung: 'Unterscheidung', verknuepfung: 'Verknüpfung' };
 
-function eintrag(e) {
+function eintrag(e, s) {
   if (e.von === 'ich') {
     if (e.art === 'weiter') return `<div class="ueb-weiter">→ Nächste Aufgabe</div>`;
     if (e.art === 'denken') return `<div class="ueb-ich"><div class="ueb-gedanken"><div class="ueb-eyebrow">Deine Gedanken</div><div class="ueb-prose sel">${md(e.text)}</div></div></div>`;
@@ -220,12 +282,14 @@ function eintrag(e) {
   if (e.art === 'abschluss') {
     if (e.ergebnis === 'verworfen') return `<div class="ueb-leise">Aufgabe verworfen.</div>`;
     const [lbl, art] = ERG[e.ergebnis] || ERG.weiter;
+    const key = `${s.id}:a${e.nr}`, jetzt = einmal.delete(key), rm = rueck[key], g = Sp.gebuchtVon(s.id, 'a', e.nr);
     const details = [
       e.modus && ['Modus', MODUS[e.modus] || e.modus], e.thema && ['Thema', e.thema],
       ['Hinweisstufe', e.stufe || 'keine'], e.fehlerart && ['Fehlerart', e.fehlerart],
       ['Erneut prüfen', e.wiederholen ? 'ja' : 'nein'], e.log && ['Eingetragen', e.log],
     ].filter(Boolean);
-    return `<div class="ueb-karte"><div class="ueb-eyebrow">Abgeschlossen <span class="chip ${art}">${lbl}</span></div>
+    return `<div class="ueb-karte ueb-abschluss${jetzt ? ' neu' : ''}" data-abschluss="${e.nr}">${jetzt && g ? `<span class="xp-flug" aria-hidden="true">+${g.xp} XP</span>` : ''}<div class="ueb-eyebrow">Abgeschlossen <span class="chip ${art} erg${jetzt ? (e.ergebnis === 'geloest' || e.ergebnis === 'hinweise' ? ' puls' : ' wackeln') : ''}">${lbl}</span>${Sp.xpChip(g)}</div>
+      ${rm ? `<p class="lrn-lob ${rm.art}${jetzt ? ' neu' : ''}">${rm.art === 'ok' ? flamme(rm.combo >= 3 ? 'jubelnd' : 'froh', 22) : ico('sparkles')}<span>${esc(rm.text)}</span></p>` : ''}
       ${e.urteil ? `<div class="ueb-urteil ueb-prose sel">${md(e.urteil)}</div>` : ''}
       ${e.musterloesung ? `<div class="ueb-trenner"></div><div class="ueb-eyebrow">Musterlösung</div><div class="ueb-prose ueb-gross sel">${md(e.musterloesung)}</div>` : ''}
       <details class="ueb-meta"><summary>Details</summary><dl>${details.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl></details></div>`;
@@ -246,23 +310,22 @@ function statZeile(s) {
 }
 
 function denktZeile(s) {
-  const sek = Math.max(0, Math.round((Date.now() - (s.seit || Date.now())) / 1000));
   const was = !s.verlauf.length ? 'sucht das erste Thema aus und stellt eine Aufgabe' : 'denkt';
-  return `<div class="ueb-denkt"><span class="ueb-punkte"><i></i><i></i><i></i></span>Claude ${was} <span class="muted num" data-ueb-uhr>${sek} s</span></div>`;
+  return Sp.warten(s, { art: 'ueben', was, sek: 'data-ueb-uhr' });
 }
 
 // ---------------------------------------------------------------- Ansicht
 export function ansicht(c) {
   const s = sitzung(c);
   const kopf = `<header class="head drag"><span class="crumb"><span class="nodrag" style="${cc(c)}"><span class="dot" style="display:inline-block;margin-right:7px"></span></span>${esc(c.name)} · Wiederholen</span>
-    ${s ? `<span class="chip acc">${ico('target')}${imLauf(c) ? `Endloslauf · ${n_(laufGesamt(c), 'Aufgabe', 'Aufgaben')} geschafft` : 'Üben'}</span><span class="muted num ueb-stat">${esc(statZeile(s))}</span>` : ''}
-    <span class="sp"></span>
+    ${s ? `<span class="chip acc">${ico('target')}${imLauf(c) ? `Endloslauf · ${n_(laufGesamt(c), 'Aufgabe', 'Aufgaben')} geschafft` : 'Üben'}</span><span class="muted num ueb-stat">${esc(statZeile(s))}</span>${Sp.comboChip(Sp.comboUeben(s))}` : ''}${imLauf(c) ? kurzRing() : ''}
+    <span class="sp"></span>${Sp.fokusKnopf()}
     ${s ? `<button class="btn sm ghost" data-ueb="ende" title="Runde beenden">${ico('stop')}Runde beenden</button>` : ''}
     <button class="btn sm ghost" data-nav="kurs:${c.slug}">${ico('arrowLeft')}Zum Kurs</button></header>`;
   if (!s) return kopf + start(c);
   const a = offeneAufgabe(s);
   return kopf + `<div class="view ueb-view" id="ueb-view"><div class="ueb-wrap" style="${cc(c)}">
-    <div class="ueb-verlauf">${s.verlauf.map(eintrag).join('')}
+    <div class="ueb-verlauf">${s.verlauf.map((e) => eintrag(e, s)).join('')}
     ${s.zustand === 'denkt' ? denktZeile(s) : ''}
     ${s.zustand === 'fehler' ? `<div class="note"><span>${ico('alert')}</span><span>Claude hat nicht geantwortet: ${esc(s.fehler || '')}</span><span class="sp"></span><button class="btn sm" data-ueb="nochmal">${ico('refresh')}Nochmal versuchen</button></div>` : ''}
     </div></div></div>` + dock(c, s, a);
@@ -290,7 +353,7 @@ function dock(c, s, a) {
       <div class="ueb-feld"><div class="ueb-eyebrow">Deine Gedanken</div>
         <textarea id="ueb-text" rows="4" placeholder="Hier arbeiten, laut denken." spellcheck="true" ${denkt ? 'disabled' : ''}>${esc(t)}</textarea>${zwischen()}</div>
       <div class="ueb-zeile">${mic()}<span class="muted klein">↵ sendet · ⇧↵ neue Zeile · ${D.zustand === 'aus' || D.zustand === 'fehler' ? 'Esc verwirft die Aufgabe' : 'Esc beendet das Diktieren'}</span><span class="sp"></span>
-        <button class="btn primary sm" data-ueb="senden" ${denkt || !t.trim() ? 'disabled' : ''}>Gedanken senden</button></div>
+        <button class="btn los haupt" data-ueb="senden" ${denkt || !t.trim() ? 'disabled' : ''}>Gedanken senden</button></div>
     </div></div>`;
   }
   const weiter = !t.trim() && (s.stat && s.stat.aufgaben);
@@ -298,9 +361,9 @@ function dock(c, s, a) {
   return `<div class="ueb-dock" style="${cc(c)}"><div class="ueb-dock-in ueb-pause">
     <textarea id="ueb-text" rows="2" placeholder="Fragen, antworten oder die Runde lenken …" spellcheck="true" ${denkt ? 'disabled' : ''}>${esc(t)}</textarea>${zwischen()}
     <div class="ueb-zeile">${mic()}<span class="muted klein">${weiter && wechsel ? `Serie geschafft · ↵ weiter mit ${esc(wechsel.short)}, damit es gemischt bleibt` : weiter ? '↵ auf leerem Feld: nächste Aufgabe' : '↵ sendet · ⇧↵ neue Zeile'}</span><span class="sp"></span>
-      ${weiter && wechsel ? `<button class="btn ueb-naechste" data-ueb="kurswechsel" ${denkt ? 'disabled' : ''}>Nächste Aufgabe · ${esc(wechsel.short)} →</button>`
-    : weiter ? `<button class="btn ueb-naechste" data-ueb="weiter" ${denkt ? 'disabled' : ''}>Nächste Aufgabe →</button>`
-    : `<button class="btn primary sm" data-ueb="senden" ${denkt || !t.trim() ? 'disabled' : ''}>Senden</button>`}</div>
+      ${weiter && wechsel ? `<button class="btn ueb-naechste haupt" data-ueb="kurswechsel" ${denkt ? 'disabled' : ''}>Nächste Aufgabe · ${esc(wechsel.short)} →</button>`
+    : weiter ? `<button class="btn ueb-naechste haupt" data-ueb="weiter" ${denkt ? 'disabled' : ''}>Nächste Aufgabe →</button>`
+    : `<button class="btn los haupt" data-ueb="senden" ${denkt || !t.trim() ? 'disabled' : ''}>Senden</button>`}</div>
   </div></div>`;
 }
 
@@ -386,21 +449,46 @@ export function verdrahten(c, { fokus = true } = {}) {
       const el = document.querySelector('[data-ueb-uhr]');
       if (!el || S.route.name !== 'ueben') return clearInterval(uhr);
       el.textContent = Math.round((Date.now() - (s.seit || Date.now())) / 1000) + ' s';
+      Sp.wartenTick();
     }, 1000);
   }
+  kurzLaufen(); kurzTick();
+  // „Gelöst“ gerade live: kleiner Konfetti-Stoß aus dem Ergebnis-Chip
+  const knall = document.querySelector('.ueb-abschluss.neu .chip.erg.ok');
+  if (knall) stoss(knall, 40);
 }
 
 // ---------------------------------------------------------------- Daten
 export async function laden(c) {
   S.ueb[c.key] = await L.uebenStand(c.key);
+  if (S.ueb[c.key]) Sp.ueben(S.ueb[c.key], false);              // still nachbuchen
 }
 export function stand(s) {
   if (!s) return;
-  const vorher = !!S.ueb[s.kurs];
-  if (s.zustand === 'beendet') delete S.ueb[s.kurs]; else S.ueb[s.kurs] = s;
+  const alt = S.ueb[s.kurs], vorher = !!alt;
   const c = S.byKey[s.kurs];
+  const live = !!(c && alt && alt.id === s.id && S.route.name === 'ueben' && S.route.slug === c.slug);
+  if (s.zustand === 'beendet') delete S.ueb[s.kurs]; else S.ueb[s.kurs] = s;
+  if (s.zustand !== 'beendet') {
+    const neu = Sp.ueben(s, live);
+    if (live) rueckmelden(s, neu);
+  }
   if (c && S.route.name === 'ueben' && S.route.slug === c.slug) hooks.zeichnen();
   else if (vorher !== !!S.ueb[s.kurs]) hooks.geaendert();    // Karten und Seitenleiste zeigen, dass eine Runde läuft
+}
+
+// Frisch abgeschlossene Aufgaben: Ton, Puls oder Wackeln am Chip, „+n XP“, eine Zeile Lob oder Trost
+function rueckmelden(s, neu) {
+  let klang = null;
+  for (const a of neu) {
+    if (a.ergebnis === 'verworfen') continue;
+    const key = `${s.id}:a${a.nr}`;
+    einmal.add(key);
+    if (a.ergebnis === 'geloest') { rueck[key] = { art: 'ok', combo: a.combo, text: `${Sp.lobText(a.combo, a.nr)} +${a.xp} XP${a.combo >= 2 ? ` · ${a.combo} in Folge` : ''}` }; klang = klang || 'richtig'; }
+    else if (a.ergebnis === 'hinweise') { rueck[key] = { art: 'teils', text: `Mit Hinweisen geschafft. +${a.xp} XP` }; klang = klang || 'richtig'; }
+    else { rueck[key] = { art: 'bad', text: `${Sp.trostText(a.nr)} Schau dir die Musterlösung an. +${a.xp} XP` }; klang = 'falsch'; }
+  }
+  if (klang) ton[klang]();
 }
 
 // ---------------------------------------------------------------- Aktionen
@@ -472,7 +560,7 @@ document.addEventListener('input', (e) => {
 document.addEventListener('keydown', (e) => {
   const c = aktuell(); if (!c) return;
   const s = sitzung(c); if (!s) return;
-  if (document.querySelector('.overlay')) return;
+  if (document.querySelector('.overlay, .feier')) return;
   if (e.key === 'Escape' && (D.zustand === 'laeuft' || D.zustand === 'verbindet')) { e.preventDefault(); e.stopImmediatePropagation(); diktatAus(); return; }
   // stopImmediatePropagation: der Esc-Handler in app.js würde den Dialog sonst sofort wieder schließen
   if (e.key === 'Escape' && offeneAufgabe(s) && s.zustand !== 'denkt') { e.preventDefault(); e.stopImmediatePropagation(); verwerfenFragen(c); return; }
