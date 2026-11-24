@@ -210,6 +210,10 @@ a { color: inherit; }
 .ev .zeit small { display: block; font-weight: 400; color: var(--muted); font-size: 12px; }
 .ev .ttl { font-weight: 500; }
 .ev .ev-sub { font-size: 12px; margin-top: 2px; }
+.ev .ablauf { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.ev .ablauf span { font-size: 12px; font-variant-numeric: tabular-nums; padding: 2px 8px; border-radius: 99px; border: 1px solid var(--rule-strong); }
+.ev .ablauf span.lernen { background: var(--surface-2); }
+.ev .ablauf span.pause { color: var(--muted); border-style: dashed; }
 /* Realismus-Check der Lernblöcke */
 .real-liste { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .real-liste li { display: grid; grid-template-columns: 18px 1fr; gap: 10px; align-items: start; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); }

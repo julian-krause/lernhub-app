@@ -19,7 +19,7 @@ import { ton, konfetti, ruhig } from './effekte.js';
 import { xpLektion } from './regeln.js';
 
 const L = window.lernhub;
-let hooks = { toast: () => {}, zeichnen: () => {}, nav: () => {}, geaendert: () => {} };
+let hooks = { toast: () => {}, zeichnen: () => {}, nav: () => {}, geaendert: () => {}, neuLaden: () => {} };
 const entwurf = {};            // Kursschlüssel → Text im Feld
 const wahl = {};               // Kursschlüssel → gewählte Option der offenen Frage
 const sicher = {};             // Kursschlüssel → sicher | unsicher | geraten
@@ -834,14 +834,16 @@ async function aktion(was) {
   if (was === 'weiter') { leeren(c); ok(await L.lernenSenden(c.key, 'weiter')); return; }
   if (was === 'eintragen') {
     verlassen();
+    sofortErledigt(c, s);                         // Anzeige sofort: Haken, Wochenzähler, Fortschritt
     const r = await L.lernenEintragen(c.key);
     if (r && r.ok) hooks.toast(`${s.lektion.id} eingetragen. Roadmap, Kalender und Lernhub ziehen nach.`);
-    else ok(r);
+    else { ok(r); hooks.neuLaden(); }             // nicht eingetragen: echten Stand zurückholen
     return;
   }
   if (was === 'ansehen') { if (s.ergebnis && s.ergebnis.datei) L.oeffnen(s.ergebnis.datei); return; }
   if (was === 'zurueck') {
     fragen('Abschluss zurücknehmen?', `${s.lektion.id} ist danach wieder offen. Das Merkblatt bleibt bei den Lektionen liegen.`, 'Zurücknehmen', async () => {
+      sofort.delete(c.key + '|' + s.lektion.id);
       L.aktion('kurstutor://undone?lesson=' + encodeURIComponent(s.ergebnis.datei));
       await L.lernenBeenden(c.key); await laden(c); hooks.nav({ name: 'kurs', slug: c.slug });
     });
@@ -877,6 +879,37 @@ function waehlen(c, i) {
   wahl[c.key] = wahl[c.key] === i ? null : i;
   document.querySelectorAll('.lrn-frage.offen [data-lrn-opt]').forEach((b) => b.classList.toggle('gew', +b.dataset.lrnOpt === wahl[c.key]));
   knopfNeu(c);
+}
+
+// „Lektion abschließen“: Die Lektion erscheint sofort als erledigt, nicht erst, wenn tutor.py (Roadmap, Kalender,
+// Lernhub.html) und hub.py fertig sind. Die echten Zahlen kommen danach mit daten:geaendert und ersetzen diese.
+const sofort = new Map();                          // "<Kurs>|<Lektion>" → { min, score, um }: abgeschlossen, Daten noch alt
+function sofortErledigt(c, s) {
+  const st = s.stat || {};
+  sofort.set(c.key + '|' + s.lektion.id, { min: minuten(s), score: st.fragen ? Math.round(st.punkte / st.fragen * 100) : null, um: Date.now() });
+  if (markieren(c, s.lektion.id, sofort.get(c.key + '|' + s.lektion.id))) hooks.geaendert();
+}
+// Nach jedem Laden (auch dem gespeicherten alten Stand): noch nicht übernommene Abschlüsse wieder eintragen.
+// Ein Eintrag fällt weg, sobald hub.py die Lektion als erledigt liefert, spätestens nach 15 Min.
+export function sofortAnwenden() {
+  for (const [k, x] of sofort) {
+    const [key, id] = k.split('|'), c = S.byKey[key], l = c && c.byId && c.byId[id];
+    if (!l || l.done || Date.now() - x.um > 15 * 60000) { sofort.delete(k); continue; }
+    markieren(c, id, x);
+  }
+}
+function markieren(c, id, x) {
+  const l = c.byId && c.byId[id];
+  if (!l || l.done) return false;
+  l.done = new Date().toLocaleDateString('sv'); l.state = 'erledigt';
+  l.minutes = l.minutes || x.min;
+  if (x.score != null && l.score == null) l.score = x.score;
+  c.done = (c.done || 0) + 1;
+  c.doneThis = (c.doneThis || 0) + 1;
+  c.open = Math.max(0, (c.open || 0) - 1);
+  const w = S.d && S.d.stats;
+  if (w) { w.weekDone = (w.weekDone || 0) + 1; w.weekOpen = Math.max(0, (w.weekOpen || 0) - 1); if (w.lessonsDone != null) w.lessonsDone += 1; }
+  return true;
 }
 
 // Einstiegskarten (auf „Diese Woche“, der Kursseite, im Lerntag): ein Klick lernt

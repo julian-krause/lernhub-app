@@ -603,17 +603,21 @@ class Lernen {
       const url = `kurstutor://done?lesson=${encodeURIComponent(datei)}&min=${min}` + (score != null ? `&score=${score}` : '');
       const r = await B.kurstutor(url);
       await this.wartenAufDone(s);                                   // über die Kurs-Tutor-App dauert das ein paar Sekunden
-      let record = '';
-      try {
-        record = (await py('--record')).trim();
-        await B.lauf(P.PYTHON, [B.skript('roadmap.py'), 'recorded', s.ws, s.lektion.id], { timeout: 30000 });
-      } catch (e) { console.error('Learning Record:', e.message); }
-      s.ergebnis = { min, score, datei, record, meldung: (r && r.meldung) || '' };
+      // Ab hier steht die Lektion in roadmap.json: sofort als erledigt melden. Der Learning Record ist Nacharbeit
+      // und läuft im Hintergrund (Roadmap rendern, Kalender und Lernhub.html macht tutor.py ohnehin danach).
+      s.ergebnis = { min, score, datei, record: '', meldung: (r && r.meldung) || '' };
       s.zustand = 'erledigt';
       if (!this.fertig.has(s.ws)) this.fertig.set(s.ws, new Map());
       this.fertig.get(s.ws).set(s.lektion.id, Date.now());
       this.melden(s);
       this.beiErledigt(s);
+      (async () => {
+        try {
+          s.ergebnis.record = (await py('--record')).trim();
+          await B.lauf(P.PYTHON, [B.skript('roadmap.py'), 'recorded', s.ws, s.lektion.id], { timeout: 30000 });
+          this.melden(s);
+        } catch (e) { console.error('Learning Record:', e.message); }
+      })();
       return { ok: true };
     } catch (e) {
       s.zustand = 'bereit';

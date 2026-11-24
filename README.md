@@ -42,19 +42,27 @@ Claude unterrichtet die nächste Lektion der Roadmap nach dem Lehrmodus der Lear
 - **Bewertung:** Auswahlfragen bewertet die App selbst und zeigt sofort die richtige Option und die Erklärung. Freie Antworten bewertet Claude im nächsten Zug. Vorhersagen (vor einem Schritt) zählen nicht und werden erst mit Claudes Auflösung aufgedeckt. Score = Anteil der Prüffragen, die beim ersten Versuch richtig waren („teils“ zählt halb).
 - **Zeitbudget:** die Schätzung der Roadmap plus 10 Min. (20 bis 25 Min.), etwa ein Schritt je 3 Min. Jede deiner Nachrichten trägt die Lektionsuhr; ab 80 % fasst Claude zusammen, bei 100 % kommt die Rückschau. Lücken über 10 Min. zählen als 10.
 - **Abschließen:** „Lektion beenden“ (oder das Ende des Plans) bringt die Rückschau. Erst „Lektion abschließen“ trägt ein: `lernen.py --merkblatt` legt `lessons/<ID>-<slug>.html` an, falls die Lektion noch keine Datei hat (Kern je Schritt mit `data-topic`, daraus übt „Wiederholen“), dann `kurstutor://done?lesson=…&min=…&score=…`, dann Learning Record und `roadmap.py recorded`. Pensum, Fortschritt, Lernzeit und Kalender ziehen nach.
+- **Sofort erledigt:** Mit „Lektion abschließen“ steht die Lektion in der App sofort als erledigt da (Haken, Wochenzähler, Fortschritt; `sofortErledigt` in `src/ui/js/lernen.js`). Merkblatt, `kurstutor://done`, Roadmap-Seite, Kalender, Lernhub.html und Learning Record laufen danach im Hintergrund; der Learning Record hält den Abschluss nicht mehr auf. Bis `hub.py` die Lektion liefert, wird sie auf jeden gespeicherten Stand neu angewendet. Klappt das Eintragen nicht, holt die App den echten Stand zurück und meldet den Fehler. `hub.py data` darf bei trägem iCloud bis 10 Min. brauchen.
 - **Danach:** „Nächste Lektion →“ lernt gleich weiter: von „Diese Woche“ aus die nächste nach dem Plan (auch in einem anderen Kurs, der Knopf nennt ihn), von der Kursseite aus die nächste dieses Kurses. „Rückgängig“ nimmt den Abschluss zurück, „Merkblatt“ öffnet es im Browser, „Abbrechen“ verwirft die Sitzung, ohne etwas einzutragen.
 - **Code:** `src/main/lernen.js` (Sitzung, Schema, Systemprompt, Eintragen), `src/ui/js/lernen.js` (Karten, Reihenfolge, Ansicht). Claude darf nur lesen. Modell und Effort: `LERNHUB_LERNEN_MODELL`, `LERNHUB_LERNEN_EFFORT` (Standard opus, medium; 11–14 s je Zug). Sitzungen liegen in `userData/lernen/<id>.json` und laufen nach einem Neustart weiter.
 - **Test:** `node tests/lernen.test.mjs` (Claude-Attrappe `tests/lernen-attrappe.mjs`).
 
 ## Lernblöcke und Realismus-Check
 
-Im Lernkalender stehen seit 24.11.2026 **nur allgemeine Lernblöcke**: „📚 Lernblock“ mit Uhrzeit, ohne Fach, ohne Lektionsnummern, ohne Lektionsliste. Was dran ist, entscheidet „Los“ in der App (`reihenfolge` in `src/ui/js/lernen.js`). Gerechnet wird in `tutor.py` (Skill `kurs-tutor`): Intern verteilt der Wochenrhythmus das Pensum je Kurs auf die Lerntage (Lektionen × dein Tempo, plus Pausen). Danach werden die Zeiten eines Tages zusammengelegt und auf möglichst wenige, gleich lange Blöcke verteilt (höchstens `max_block`, aufgerundet auf Viertelstunden, mindestens 30 Min.; `step`, `min_block` in `.kurs-tutor-kalender.json`).
+Im Lernkalender stehen seit 24.11.2026 **nur feste Lernblöcke**, ohne Fach und ohne Lektionen. Die Pausen sind schon drin:
+
+| Block | Ablauf | Länge |
+|---|---|---|
+| 📚 Lernblock | 40 Min. lernen · 10 Min. Pause · 40 Min. lernen | 90 Min. |
+| 📚 Kurzer Lernblock | 40 Min. lernen · 5 Min. Puffer (nur für eine übrige Einheit) | 45 Min. |
+
+Zwischen zwei Blöcken bleiben mindestens 30 Min. frei, Beginn zur Viertelstunde. Die Kalendernotiz und der Lerntag in der App zeigen den Ablauf mit Uhrzeiten. Was dran ist, entscheidet „Los“ (`reihenfolge` in `src/ui/js/lernen.js`). Wie viele Blöcke ein Tag bekommt, rechnet `tutor.py` (Skill `kurs-tutor`): Der Wochenrhythmus verteilt das Pensum je Kurs auf die Lerntage (Lektionen × dein Tempo), die Lernzeit des Tages wird in Einheiten zu 40 Min. geteilt und in die freien Zeiten gelegt (`config.block`: `lernen`, `pause`, `einheiten`, `puffer`, `abstand`).
 
 Der **Realismus-Check** (`tutor.py pruefen`, im Lernhub unter „Nächster Lerntag“, kurz auf der Karte in „Diese Woche“) ändert nichts am Plan, er prüft nur:
 
-- **Platz:** Pensum, das diese oder nächste Woche in keinen freien Lernblock passt und weiterrutscht.
+- **Platz:** Pensum, für das diese oder nächste Woche kein Lernblock frei ist.
 - **Tempo:** Pensum dieser Woche gegen deinen Schnitt der letzten 4 Wochen (Warnung ab dem 1,4-Fachen).
-- **Tageslast:** Tage der nächsten Woche mit mehr als 3 h in Blöcken.
+- **Tageslast:** Tage der nächsten Woche mit mehr als 3 h reiner Lernzeit.
 
 Grenzen unter `config.realism` (`day_warn`, `tempo`, `weeks`). Gibt es Warnungen, nennt der Abgleich ihre Zahl in seiner Meldung.
 

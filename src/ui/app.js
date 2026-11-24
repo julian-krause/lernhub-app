@@ -29,6 +29,7 @@ async function laden() {
     const d = await L.daten();
     S.alt = !!d._alt;                       // alter Stand, hub.py rechnet noch (Neues kommt per daten:geaendert)
     setDaten(d);
+    Ln.sofortAnwenden();                    // gerade abgeschlossene Lektionen, die hub.py noch nicht kennt
     await Promise.all([Ln.ladenAlle(), U.ladenAlle()]);      // laufende Sitzungen und was je Kurs dran ist
     Sp.nachbuchen();                                          // Spielstand: still nachbuchen, Abzeichen freischalten
     S.fehler = null;
@@ -356,7 +357,7 @@ L.on.icloud((x) => {
   S.info = await L.info();
   const ein = await L.einstellungen();
   S.schluessel = ein.schluessel; S.openai = !!ein.openai;
-  const hooks = { toast, nav: (r) => nav(r), zeichnen: () => zeichnen(), geaendert: uebersichtNeu, seitenleiste: () => seitenleiste() };
+  const hooks = { toast, nav: (r) => nav(r), zeichnen: () => zeichnen(), geaendert: uebersichtNeu, seitenleiste: () => seitenleiste(), neuLaden: () => neuLaden() };
   U.init(hooks); Ln.init(hooks); Sy.init(hooks); Sp.init(hooks); Sh.init(hooks);
   await Sp.laden();
   await Sy.laden();

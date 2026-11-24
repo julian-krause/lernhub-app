@@ -173,7 +173,7 @@ export function woche() {
     lt = `<div class="card"><h3>${ico('calendar')}Nächster Lerntag<span class="sp"></span><button class="btn sm ghost" data-nav="lerntag">Ansehen${ico('chevron')}</button></h3>
       <div class="lt-tag">${fWTL(tag)}, ${fDM(tag)}${+tag === +heute ? ' · heute' : ''}</div>
       <div class="muted lt-zeit">${esc(ag.events[0] ? ag.events[0].start : '')}–${esc(ag.events.length ? ag.events[ag.events.length - 1].end : '')} · ${n_(bl.length, 'Block', 'Blöcke')}</div>
-      <div class="bars">${bl.map((e) => `<div class="bar-row"><span class="nm">${e.kind === 'probe' ? 'Probeklausur' : 'Lernblock'}</span><span class="muted">${esc(e.start)}–${esc(e.end)} · ${dauer(blockMin(e))}</span><span></span></div>`).join('')}</div>${realKurz()}</div>`;
+      <div class="bars">${bl.map((e) => `<div class="bar-row"><span class="nm">${e.kind === 'probe' ? 'Probeklausur' : esc(e.title.replace(/^\S+\s/, ''))}</span><span class="muted">${esc(e.start)}–${esc(e.end)} · ${dauer(e.lernMin || blockMin(e))} Lernen</span><span></span></div>`).join('')}</div>${realKurz()}</div>`;
   }
 
   // Lernzeit: gemessene Minuten der abgeschlossenen Lektionen (roadmap.json) plus Übungszeit aus „Wiederholen“ (uebung.json)
@@ -286,8 +286,9 @@ export function lerntag() {
     <div class="agenda">${ag.events.map((e) => {
       const c = e.kind === 'probe' && e.course ? S.byKey[e.course] : null;
       const block = e.kind === 'block' || e.kind === 'probe';
-      const titel = e.kind === 'probe' ? `Probeklausur${c ? ' · ' + c.short : ''}` : e.kind === 'block' ? 'Lernblock' : e.title;
-      const unter = block ? `<div class="muted ev-sub">${dauer(blockMin(e))}${e.kind === 'block' ? ' Lernzeit' : ' unter Klausurbedingungen'}</div>` : '';
+      const titel = e.kind === 'probe' ? `Probeklausur${c ? ' · ' + c.short : ''}` : e.kind === 'block' ? e.title.replace(/^\S+\s/, '') : e.title;
+      const ablauf = (e.teile || []).length ? `<div class="ablauf">${e.teile.map(([v, b, art]) => `<span class="${art}">${esc(v)}–${esc(b)} ${art === 'lernen' ? 'Lernen' : 'Pause'}</span>`).join('')}</div>` : '';
+      const unter = block ? `<div class="muted ev-sub">${e.kind === 'block' ? `${dauer(e.lernMin || blockMin(e))} Lernzeit, Pausen inklusive` : `${dauer(blockMin(e))} unter Klausurbedingungen`}</div>${ablauf}` : '';
       return `<div class="ev ${block ? 'block' : e.kind === 'lunch' ? 'pause' : ''}" style="${cc(c)}"><div class="zeit">${esc(e.start)}<small>bis ${esc(e.end)}</small></div>
         <div><div class="ttl">${esc(titel)}${e.moved ? ' <span class="chip">von dir verschoben</span>' : ''}</div>${unter}</div>
         <div class="ev-akt">${e.kind === 'block' && los ? `<button class="btn sm primary" data-lernen="lauf">${ico('play')}Los</button>` : ''}${c ? `<button class="btn sm ghost" data-nav="kurs:${c.slug}">Kurs</button>` : ''}</div></div>`;

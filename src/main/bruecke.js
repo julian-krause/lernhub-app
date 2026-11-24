@@ -34,7 +34,9 @@ async function hubDaten() {
   const args = [skript('hub.py'), 'data'];
   if (process.env.LERNHUB_SEMESTER) args.push(process.env.LERNHUB_SEMESTER);
   if (process.env.LERNHUB_TEST_HUB_LANGSAM) await new Promise((r) => setTimeout(r, +process.env.LERNHUB_TEST_HUB_LANGSAM));   // Test: iCloud lädt
-  const out = await lauf(P.PYTHON, args, { timeout: 180000 });
+  // 10 Min.: Bei trägem iCloud braucht hub.py mehrere Minuten. Bis dahin zeigt die App den gespeicherten Stand;
+  // ein Abbruch nach 3 Min. hätte das fast fertige Ergebnis verworfen und nie frische Daten gebracht.
+  const out = await lauf(P.PYTHON, args, { timeout: 600000 });
   return JSON.parse(out);
 }
 
