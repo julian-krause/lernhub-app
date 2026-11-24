@@ -91,7 +91,8 @@ try {
   await win.click('.side-item[data-nav="lerntag"]');
   await win.waitForSelector('.agenda, .empty');
   if (await win.$('.agenda .ev.block')) {
-    check(!(await win.$('.ev.block .lchip')) && /Lernblock/.test(await text('.agenda')) && !/\bL\d{4}/.test(await text('.agenda')), 'Lerntag: nur Lernblöcke, keine Lektionen');
+    const titel = await win.$$eval('.ev.block .ttl', (t) => t.map((x) => x.textContent.trim()));
+    check(titel.every((t) => /^Lernblock|^Probeklausur/.test(t)) && !(await win.$('.ev.block .lchip')) && !/\bL\d{4}/.test(await text('.agenda')), 'Lerntag: nur allgemeine Lernblöcke, kein Fach, keine Lektionen');
     check(!(await win.$('.agenda [data-lesson], .agenda [data-erstellen]')), 'Lerntag: Lektionen öffnen kein Lektions-Fenster, „Lernen“ startet den Kurs');
   }
   check((await text('.acts-grid')).includes('Plan & Kalender abgleichen'), 'Lerntag: Abgleich-Aktionen');

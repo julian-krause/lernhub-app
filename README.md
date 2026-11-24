@@ -19,7 +19,7 @@ Installiert: `~/Applications/Lernhub.app`. Neu bauen: `npm run app` (= `scripts/
 |---|---|
 | Seitenleiste | Spielkarte (Level, Serie, Tagesziel → Profil), Suche (⌘K), „Diese Woche“, „Nächster Lerntag“, **Läuft** (offene Lektionen und Übungsrunden, ein Klick setzt sie fort), Kurse mit Wochenring (⌘1–6), Kurse ohne Roadmap, Einstellungen, Stand der Daten |
 | Diese Woche | Karten **Lernen** und **Wiederholen** (je ein „Los“), Wochenpensum, nächster Lerntag, Fortschritt im Semester, Lernzeit, ILIAS-Sync, neue ILIAS-Dateien, übrige Claude-Aktionen (`claude-cli://`) |
-| Nächster Lerntag | Lernblöcke des Tages (Kurs und Zeit, keine Lektionen) mit „Lernen“ je Block, **Realismus-Check**, Pensum-Diagramm bis zur Klausur, Abgleich |
+| Nächster Lerntag | allgemeine Lernblöcke des Tages (nur Zeit, kein Fach, keine Lektionen) mit „Los“, **Realismus-Check**, Pensum-Diagramm bis zur Klausur, Abgleich |
 | Kurs | Klausur, Zielnote, Fortschritt, Karten **Lernen** und **Wiederholen** für diesen Kurs, Tabs **Pfad · Liste · Material · Lücken · Notizen** |
 | Lernen | Unterricht im Gespräch, rechts der Plan der Lektion mit Uhr und die Roadmap des Kurses |
 | Wiederholen | Übungsrunde über alle erledigten Lektionen, nach LearnHarness „Üben“ |
@@ -34,7 +34,7 @@ Auf der Kursseite klappen frühere, ganz erledigte Wochen ein („Frühere Woche
 Claude unterrichtet die nächste Lektion der Roadmap nach dem Lehrmodus der LearnHarness-App in der Kompakt-Fassung.
 
 - **Einstieg, ohne Zwischenseite:**
-  - Karte „Lernen“ auf „Diese Woche“: „Los“ (auch ⌘L) nimmt die Lektion, die nach dem Plan dran ist, über alle Kurse. Reihenfolge (`reihenfolge` in `src/ui/js/lernen.js`): erst eine offene Sitzung, dann der Lernblock von heute im Kalender, dann der Kurs mit dem größten offenen Wochenpensum (Rückstand zuerst), zuletzt Vorlernen. Die Karte sagt, warum sie mit diesem Kurs beginnt. Ein Klick auf einen Kurs-Chip lernt dort.
+  - Karte „Lernen“ auf „Diese Woche“: „Los“ (auch ⌘L) nimmt die Lektion, die nach dem Plan dran ist, über alle Kurse. Reihenfolge (`reihenfolge` in `src/ui/js/lernen.js`): erst eine offene Sitzung, dann der Kurs mit dem größten offenen Wochenpensum (Rückstand zuerst), zuletzt Vorlernen. Die Karte sagt, warum sie mit diesem Kurs beginnt. Ein Klick auf einen Kurs-Chip lernt dort.
   - Karte „Lernen“ auf der Kursseite, die Lektion im Pfad und in der Liste, „Lernen“ im Lerntag: lernt in diesem Kurs.
   - Einzustellen gibt es nichts. Dran ist immer die erste nicht erledigte Lektion, deren Material da ist. Probeklausuren laufen nicht im Gespräch.
 - **Ablauf:** Jede Nachricht von Claude löst deine letzte Antwort auf, erklärt einen Schritt und endet mit genau einer Frage. Meist ist das eine Auswahlfrage (Klick oder Tasten 1–4, dazu „Wie sicher?“ und das Feld „Deine Gedanken“), selten eine kurze freie Frage. Text ohne Auswahl geht als Rückfrage an Claude, die Frage bleibt offen. „Weiß ich nicht“ zählt als nicht gewusst.
@@ -48,7 +48,7 @@ Claude unterrichtet die nächste Lektion der Roadmap nach dem Lehrmodus der Lear
 
 ## Lernblöcke und Realismus-Check
 
-Im Lernkalender stehen seit 24.11.2026 **nur Lernblöcke**: Kurs und Zeit, z. B. „📚 Mathe · Lernblock“, ohne Lektionsnummern und ohne Lektionsliste. Welche Lektion dran ist, entscheidet „Lernen“ in der App. Gerechnet wird weiter in `tutor.py` (Skill `kurs-tutor`): Die Länge eines Blocks ergibt sich aus dem Wochenpensum des Kurses an diesem Tag mal deinem Tempo je Lektion, plus Pausen, aufgerundet auf Viertelstunden und mindestens 30 Min. (`step`, `min_block` in `.kurs-tutor-kalender.json`).
+Im Lernkalender stehen seit 24.11.2026 **nur allgemeine Lernblöcke**: „📚 Lernblock“ mit Uhrzeit, ohne Fach, ohne Lektionsnummern, ohne Lektionsliste. Was dran ist, entscheidet „Los“ in der App (`reihenfolge` in `src/ui/js/lernen.js`). Gerechnet wird in `tutor.py` (Skill `kurs-tutor`): Intern verteilt der Wochenrhythmus das Pensum je Kurs auf die Lerntage (Lektionen × dein Tempo, plus Pausen). Danach werden die Zeiten eines Tages zusammengelegt und auf möglichst wenige, gleich lange Blöcke verteilt (höchstens `max_block`, aufgerundet auf Viertelstunden, mindestens 30 Min.; `step`, `min_block` in `.kurs-tutor-kalender.json`).
 
 Der **Realismus-Check** (`tutor.py pruefen`, im Lernhub unter „Nächster Lerntag“, kurz auf der Karte in „Diese Woche“) ändert nichts am Plan, er prüft nur:
 
@@ -112,7 +112,7 @@ Lernhub macht aus Lernen und Wiederholen ein Spiel, ohne am Unterricht etwas zu 
 - *Seitenleiste:* Karte mit Flamme, Level, Rang, XP-Balken, Serie und Tagesziel-Ring; ein Klick öffnet das **Profil** (Kalender der letzten 12 Wochen, Abzeichen, Rekorde, Einstellungen: Tagesziel, Lerntage, Töne, Fokus-Modus, Erinnerungen).
 - *Diese Woche:* Leiste mit Tagesziel, Wochenpunkten Mo–So, Serie und Level, darunter die Tagesquests mit Truhe. Die Karte „Wiederholen“ nennt die Portion für heute (fällig plus offene Lücken, höchstens 8, minus heute Geübtes).
 - *Pfad der Kursseite:* Sterne unter erledigten Lektionen, eine hüpfende Blase „START“ über der, die dran ist, Klausurtraining als Boss-Knoten, eine Truhe am Wochenziel.
-- *Erinnerungen:* Mitteilung, wenn heute ein Lernblock aus dem Kalender beginnt (nur Kurs und Uhrzeit), und abends ab 19 Uhr, wenn die Wochenserie knapp wird (im Test aus).
+- *Erinnerungen:* Mitteilung, wenn heute ein Lernblock aus dem Kalender beginnt (nur Uhrzeit), und abends ab 19 Uhr, wenn die Wochenserie knapp wird (im Test aus).
 - Einmal zur Begrüßung zeigt Lernhub den Stand aus dem bisherigen Verlauf. Maskottchen ist eine Flamme mit Gesicht (froh, müde, jubelnd). Töne sind leise WebAudio-Oszillatoren; unter „Bewegung reduzieren“ bewegt sich nichts.
 
 ## Diktieren

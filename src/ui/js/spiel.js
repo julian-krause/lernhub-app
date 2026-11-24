@@ -499,8 +499,7 @@ function erinnernPruefen() {
       if (e.kind !== 'block' || !e.startTs) continue;
       const ab = e.startTs * 1000;
       if (jetzt >= ab - 60000 && jetzt < ab + 10 * 60000) {
-        const c = S.byKey[e.course];
-        melde(`block:${heute}:${e.start}`, 'Dein Lernblock beginnt', `${c ? c.short : e.course || 'Lernen'}: Lernblock bis ${e.end} Uhr. Die Flamme wartet schon.`, { name: 'woche' });
+        melde(`block:${heute}:${e.start}`, 'Dein Lernblock beginnt', `Lernzeit bis ${e.end} Uhr. Die Flamme wartet schon.`, { name: 'woche' });
       }
     }
   }

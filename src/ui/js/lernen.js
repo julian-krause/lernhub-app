@@ -90,23 +90,20 @@ export function dran(c) {
 }
 export const grund = (c) => ziel(c).grund || '';
 
-// Reihenfolge über alle Kurse, ohne Einstellung: erst, woran du schon sitzt; dann der Lernblock von heute im
-// Kalender; dann der Kurs mit dem größten offenen Wochenpensum (Rückstand zuerst); zuletzt Vorlernen.
+// Reihenfolge über alle Kurse, ohne Einstellung: erst, woran du schon sitzt; dann der Kurs mit dem größten offenen
+// Wochenpensum (Rückstand zuerst); zuletzt Vorlernen. Die Lernblöcke im Kalender sind allgemein (kein Fach) und
+// spielen für die Reihenfolge keine Rolle.
 export function reihenfolge() {
-  const ag = S.d.agenda;
-  const bloecke = ag && ag.date === S.d.today ? ag.events.filter((e) => e.kind === 'block' && e.course) : [];
   return S.rc.map((c, i) => {
     const d = dran(c);
     if (!d) return null;
-    const heute = bloecke.findIndex((e) => e.course === c.key);       // Lernblock des Kurses heute (ohne Lektionen)
     const rest = Math.max(0, (c.quota || 0) - (c.doneThis || 0) - (gebucht(c) ? 1 : 0));
-    const rang = d.sitzung ? 0 : heute >= 0 ? 1 : rest > 0 ? 2 : 3;
-    return { c, d, rang, heute, rest, i, block: heute >= 0 ? bloecke[heute] : null };
-  }).filter(Boolean).sort((a, b) => a.rang - b.rang || a.heute - b.heute || b.rest - a.rest || (b.c.alarm ? 1 : 0) - (a.c.alarm ? 1 : 0) || a.i - b.i);
+    const rang = d.sitzung ? 0 : rest > 0 ? 2 : 3;
+    return { c, d, rang, rest, i };
+  }).filter(Boolean).sort((a, b) => a.rang - b.rang || b.rest - a.rest || (b.c.alarm ? 1 : 0) - (a.c.alarm ? 1 : 0) || a.i - b.i);
 }
 export function warum(x) {
   if (x.rang === 0) return 'weil du dort mittendrin bist';
-  if (x.rang === 1) return `weil heute ab ${x.block.start} Uhr der Lernblock im Kalender steht`;
   if (x.rang === 2) return `weil dort diese Woche noch ${n_(x.rest, 'Lektion', 'Lektionen')} offen ${x.rest === 1 ? 'ist' : 'sind'}`;
   return 'zum Vorlernen, das Wochenpensum ist geschafft';
 }

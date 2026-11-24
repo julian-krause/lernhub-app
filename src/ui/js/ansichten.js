@@ -173,7 +173,7 @@ export function woche() {
     lt = `<div class="card"><h3>${ico('calendar')}Nächster Lerntag<span class="sp"></span><button class="btn sm ghost" data-nav="lerntag">Ansehen${ico('chevron')}</button></h3>
       <div class="lt-tag">${fWTL(tag)}, ${fDM(tag)}${+tag === +heute ? ' · heute' : ''}</div>
       <div class="muted lt-zeit">${esc(ag.events[0] ? ag.events[0].start : '')}–${esc(ag.events.length ? ag.events[ag.events.length - 1].end : '')} · ${n_(bl.length, 'Block', 'Blöcke')}</div>
-      <div class="bars">${bl.map((e) => { const c = S.byKey[e.course]; return `<div class="bar-row" style="${cc(c)}"><span class="nm"><span class="dot"></span>${esc(c ? c.short : e.course || '')}</span><span class="muted">${esc(e.start)}–${esc(e.end)} · ${dauer(blockMin(e))}</span><span></span></div>`; }).join('')}</div>${realKurz()}</div>`;
+      <div class="bars">${bl.map((e) => `<div class="bar-row"><span class="nm">${e.kind === 'probe' ? 'Probeklausur' : 'Lernblock'}</span><span class="muted">${esc(e.start)}–${esc(e.end)} · ${dauer(blockMin(e))}</span><span></span></div>`).join('')}</div>${realKurz()}</div>`;
   }
 
   // Lernzeit: gemessene Minuten der abgeschlossenen Lektionen (roadmap.json) plus Übungszeit aus „Wiederholen“ (uebung.json)
@@ -281,17 +281,16 @@ export function lerntag() {
   let body = '<p class="empty">Kein Lerntag geplant.</p>';
   if (ag) {
     const tag = pd(ag.date);
-    const zuerst = ((Ln.reihenfolge()[0] || {}).c || {}).key;      // der Kurs, den „Los“ zuerst nähme
-    body = `<div><h1 class="title">${fWTL(tag)}, ${fDMY(tag)}</h1><p class="sub">Kalender „${esc(d.calendar.name)}“ · Start ${esc(d.calendar.start)} Uhr · nur Lernblöcke, was dran ist, entscheidet „Lernen“</p></div>
+    const los = Ln.reihenfolge().length > 0;                      // gibt es irgendwo etwas zu lernen?
+    body = `<div><h1 class="title">${fWTL(tag)}, ${fDMY(tag)}</h1><p class="sub">Kalender „${esc(d.calendar.name)}“ · Start ${esc(d.calendar.start)} Uhr · allgemeine Lernblöcke, was dran ist, entscheidet „Los“</p></div>
     <div class="agenda">${ag.events.map((e) => {
-      const c = e.course ? S.byKey[e.course] : null;
+      const c = e.kind === 'probe' && e.course ? S.byKey[e.course] : null;
       const block = e.kind === 'block' || e.kind === 'probe';
-      const dran = c ? Ln.dran(c) : null;
-      const titel = e.kind === 'probe' ? `Probeklausur · ${c ? c.short : ''}` : c ? `${c.short} · Lernblock` : e.title;
-      const unter = block ? `<div class="muted ev-sub">${dauer(blockMin(e))}${e.kind === 'block' ? ' Lernzeit' : ' unter Klausurbedingungen'}${e.nachholen ? ' · nachholen' : ''}</div>` : '';
+      const titel = e.kind === 'probe' ? `Probeklausur${c ? ' · ' + c.short : ''}` : e.kind === 'block' ? 'Lernblock' : e.title;
+      const unter = block ? `<div class="muted ev-sub">${dauer(blockMin(e))}${e.kind === 'block' ? ' Lernzeit' : ' unter Klausurbedingungen'}</div>` : '';
       return `<div class="ev ${block ? 'block' : e.kind === 'lunch' ? 'pause' : ''}" style="${cc(c)}"><div class="zeit">${esc(e.start)}<small>bis ${esc(e.end)}</small></div>
         <div><div class="ttl">${esc(titel)}${e.moved ? ' <span class="chip">von dir verschoben</span>' : ''}</div>${unter}</div>
-        <div class="ev-akt">${c && dran ? `<button class="btn sm${zuerst === c.key ? ' primary' : ''}" data-lernen="kurs|${esc(c.key)}">${ico('play')}${dran.sitzung ? 'Weiterlernen' : 'Lernen'}</button>` : ''}${c ? `<button class="btn sm ghost" data-nav="kurs:${c.slug}">Kurs</button>` : ''}</div></div>`;
+        <div class="ev-akt">${e.kind === 'block' && los ? `<button class="btn sm primary" data-lernen="lauf">${ico('play')}Los</button>` : ''}${c ? `<button class="btn sm ghost" data-nav="kurs:${c.slug}">Kurs</button>` : ''}</div></div>`;
     }).join('')}</div>`;
   }
   return kopf('Nächster Lerntag', knoepfe) + `<div class="view"><div class="wrap stack">${body}
