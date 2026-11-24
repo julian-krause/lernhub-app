@@ -91,10 +91,11 @@ try {
   await win.click('.side-item[data-nav="lerntag"]');
   await win.waitForSelector('.agenda, .empty');
   if (await win.$('.agenda .ev.block')) {
-    check((await win.$$('.ev.block .lchip')).length > 0, 'Lerntag: Blöcke mit ihren Lektionen');
+    check(!(await win.$('.ev.block .lchip')) && /Lernblock/.test(await text('.agenda')) && !/\bL\d{4}/.test(await text('.agenda')), 'Lerntag: nur Lernblöcke, keine Lektionen');
     check(!(await win.$('.agenda [data-lesson], .agenda [data-erstellen]')), 'Lerntag: Lektionen öffnen kein Lektions-Fenster, „Lernen“ startet den Kurs');
   }
   check((await text('.acts-grid')).includes('Plan & Kalender abgleichen'), 'Lerntag: Abgleich-Aktionen');
+  check(/Realismus-Check/.test(await text('#ansicht')) && !!(await win.$('.card.real .zeit-kacheln')), 'Lerntag: Realismus-Check der Lernblöcke');
   await bild('4-lerntag');
 
   // ---- Einstellungen

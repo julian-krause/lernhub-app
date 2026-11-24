@@ -19,7 +19,7 @@ Installiert: `~/Applications/Lernhub.app`. Neu bauen: `npm run app` (= `scripts/
 |---|---|
 | Seitenleiste | Spielkarte (Level, Serie, Tagesziel → Profil), Suche (⌘K), „Diese Woche“, „Nächster Lerntag“, **Läuft** (offene Lektionen und Übungsrunden, ein Klick setzt sie fort), Kurse mit Wochenring (⌘1–6), Kurse ohne Roadmap, Einstellungen, Stand der Daten |
 | Diese Woche | Karten **Lernen** und **Wiederholen** (je ein „Los“), Wochenpensum, nächster Lerntag, Fortschritt im Semester, Lernzeit, ILIAS-Sync, neue ILIAS-Dateien, übrige Claude-Aktionen (`claude-cli://`) |
-| Nächster Lerntag | Kalenderblöcke mit ihren Lektionen und „Lernen“ je Block, Pensum-Diagramm bis zur Klausur, Abgleich |
+| Nächster Lerntag | Lernblöcke des Tages (Kurs und Zeit, keine Lektionen) mit „Lernen“ je Block, **Realismus-Check**, Pensum-Diagramm bis zur Klausur, Abgleich |
 | Kurs | Klausur, Zielnote, Fortschritt, Karten **Lernen** und **Wiederholen** für diesen Kurs, Tabs **Pfad · Liste · Material · Lücken · Notizen** |
 | Lernen | Unterricht im Gespräch, rechts der Plan der Lektion mit Uhr und die Roadmap des Kurses |
 | Wiederholen | Übungsrunde über alle erledigten Lektionen, nach LearnHarness „Üben“ |
@@ -45,6 +45,18 @@ Claude unterrichtet die nächste Lektion der Roadmap nach dem Lehrmodus der Lear
 - **Danach:** „Nächste Lektion →“ lernt gleich weiter: von „Diese Woche“ aus die nächste nach dem Plan (auch in einem anderen Kurs, der Knopf nennt ihn), von der Kursseite aus die nächste dieses Kurses. „Rückgängig“ nimmt den Abschluss zurück, „Merkblatt“ öffnet es im Browser, „Abbrechen“ verwirft die Sitzung, ohne etwas einzutragen.
 - **Code:** `src/main/lernen.js` (Sitzung, Schema, Systemprompt, Eintragen), `src/ui/js/lernen.js` (Karten, Reihenfolge, Ansicht). Claude darf nur lesen. Modell und Effort: `LERNHUB_LERNEN_MODELL`, `LERNHUB_LERNEN_EFFORT` (Standard opus, medium; 11–14 s je Zug). Sitzungen liegen in `userData/lernen/<id>.json` und laufen nach einem Neustart weiter.
 - **Test:** `node tests/lernen.test.mjs` (Claude-Attrappe `tests/lernen-attrappe.mjs`).
+
+## Lernblöcke und Realismus-Check
+
+Im Lernkalender stehen seit 24.11.2026 **nur Lernblöcke**: Kurs und Zeit, z. B. „📚 Mathe · Lernblock“, ohne Lektionsnummern und ohne Lektionsliste. Welche Lektion dran ist, entscheidet „Lernen“ in der App. Gerechnet wird weiter in `tutor.py` (Skill `kurs-tutor`): Die Länge eines Blocks ergibt sich aus dem Wochenpensum des Kurses an diesem Tag mal deinem Tempo je Lektion, plus Pausen, aufgerundet auf Viertelstunden und mindestens 30 Min. (`step`, `min_block` in `.kurs-tutor-kalender.json`).
+
+Der **Realismus-Check** (`tutor.py pruefen`, im Lernhub unter „Nächster Lerntag“, kurz auf der Karte in „Diese Woche“) ändert nichts am Plan, er prüft nur:
+
+- **Platz:** Pensum, das diese oder nächste Woche in keinen freien Lernblock passt und weiterrutscht.
+- **Tempo:** Pensum dieser Woche gegen deinen Schnitt der letzten 4 Wochen (Warnung ab dem 1,4-Fachen).
+- **Tageslast:** Tage der nächsten Woche mit mehr als 3 h in Blöcken.
+
+Grenzen unter `config.realism` (`day_warn`, `tempo`, `weeks`). Gibt es Warnungen, nennt der Abgleich ihre Zahl in seiner Meldung.
 
 ## Unendlich lernen
 
@@ -100,7 +112,7 @@ Lernhub macht aus Lernen und Wiederholen ein Spiel, ohne am Unterricht etwas zu 
 - *Seitenleiste:* Karte mit Flamme, Level, Rang, XP-Balken, Serie und Tagesziel-Ring; ein Klick öffnet das **Profil** (Kalender der letzten 12 Wochen, Abzeichen, Rekorde, Einstellungen: Tagesziel, Lerntage, Töne, Fokus-Modus, Erinnerungen).
 - *Diese Woche:* Leiste mit Tagesziel, Wochenpunkten Mo–So, Serie und Level, darunter die Tagesquests mit Truhe. Die Karte „Wiederholen“ nennt die Portion für heute (fällig plus offene Lücken, höchstens 8, minus heute Geübtes).
 - *Pfad der Kursseite:* Sterne unter erledigten Lektionen, eine hüpfende Blase „START“ über der, die dran ist, Klausurtraining als Boss-Knoten, eine Truhe am Wochenziel.
-- *Erinnerungen:* Mitteilung, wenn heute ein Lernblock aus dem Kalender beginnt, und abends ab 19 Uhr, wenn die Wochenserie knapp wird (im Test aus).
+- *Erinnerungen:* Mitteilung, wenn heute ein Lernblock aus dem Kalender beginnt (nur Kurs und Uhrzeit), und abends ab 19 Uhr, wenn die Wochenserie knapp wird (im Test aus).
 - Einmal zur Begrüßung zeigt Lernhub den Stand aus dem bisherigen Verlauf. Maskottchen ist eine Flamme mit Gesicht (froh, müde, jubelnd). Töne sind leise WebAudio-Oszillatoren; unter „Bewegung reduzieren“ bewegt sich nichts.
 
 ## Diktieren

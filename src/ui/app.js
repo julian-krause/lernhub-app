@@ -84,6 +84,7 @@ async function zeichnen() {
   const r = S.route;
   const c = r.slug ? S.bySlug[r.slug] : null;
   let html = '';
+  try {                                           // eine Ansicht, die wirft, darf nie stumm auf der alten Seite stehen bleiben
   if (r.name === 'lerntag') html = V.lerntag();
   else if (r.name === 'kurs' && c) html = V.kurs(c, r.tab || 'pfad');
   else if (r.name === 'ueben' && c && c.hasRoadmap) {
@@ -109,6 +110,12 @@ async function zeichnen() {
   else if (r.name === 'einstellungen') { await Sh.einstellungenLaden(); html = V.einstellungen(await L.einstellungen(true), S.info); }
   else if (r.name === 'profil') html = Sp.profil();
   else html = V.woche();
+  } catch (e) {
+    console.error('Ansicht', r.name, e);
+    html = `<div class="view"><div class="leer-start"><h2>Diese Ansicht ließ sich nicht zeichnen</h2>
+      <p class="muted">${esc(String(e && e.message || e))}</p><p class="muted">Die anderen Bereiche funktionieren weiter. Neu laden (⌘R) holt frische Daten.</p>
+      <button class="btn" data-reload>${ico('refresh')}Neu laden</button></div></div>`;
+  }
   const alt = el.querySelector('.view'), scroll = alt && S.route === zeichnen.letzte ? alt.scrollTop : 0;
   el.innerHTML = html;
   zeichnen.letzte = S.route;
