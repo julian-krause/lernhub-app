@@ -1,6 +1,7 @@
 // Üben („Wiederholen“): eigene Ansicht nach dem Vorbild der LearnHarness-App (practice-dock, practice-cards).
-//   - Einstieg: Karte „Wiederholen“ auf „Diese Woche“ (Endloslauf über alle Kurse, laufKarte) und auf jeder
-//     Kursseite (kursKarte). Ein Klick startet sofort.
+//   - Einstieg: Kurskarten auf „Diese Woche“ (ansichten.js, je Kurs eine Kachel „Wiederholen“) und die Karte auf
+//     jeder Kursseite (kursKarte). Ein Klick startet sofort. Der Endloslauf über alle Kurse (laufStart) läuft über
+//     ⌘⇧W und die Suche (⌘K), auch als „Nur 5 Minuten“.
 //   - Verlauf: Aufgabenkarte, „Deine Gedanken“, Claudes Text (Hinweis, Urteil, Antwort), Abschlusskarte mit
 //     Ergebnis-Chip, Urteil, Musterlösung und Details, „→ Nächste Aufgabe“.
 //   - Unten bei offener Aufgabe das Übungsfeld: Aufgabe (einklappbar) + Feld „Deine Gedanken“, ↵ sendet.
@@ -9,10 +10,12 @@
 //   - Diktieren: Mikrofon im Feld oder ⌘⇧L (Deepgram, eigener Kanal diktat:*), Esc beendet es zuerst.
 // Die Sitzung läuft im Hauptprozess (src/main/ueben.js, claude -p); hier nur Anzeige und Eingaben.
 import { esc, ico, cc, n_, $, flamme } from './util.js';
+import { md } from './md.js';
 import { S } from './state.js';
 import * as A from './aufnahme.js';
 import * as Sp from './spiel.js';
 import { ton, stoss } from './effekte.js';
+import * as Sh from './sprechstunde.js';
 
 const L = window.lernhub;
 let hooks = { toast: () => {}, zeichnen: () => {}, nav: () => {}, geaendert: () => {} };
@@ -28,7 +31,7 @@ const einmal = new Set();
 
 export function init(h) { hooks = { ...hooks, ...h }; }
 
-// ---------------------------------------------------------------- Endloslauf über alle Kurse („Wiederholen“ auf „Diese Woche“)
+// ---------------------------------------------------------------- Endloslauf über alle Kurse (⌘⇧W, Suche)
 // Ein Klick, nichts einzustellen, kein Ende: Lernhub wählt nach jeder kleinen Serie selbst den nächsten Kurs.
 //   - Serien nach Aufgaben statt nach Minuten: 3 bis 6 Aufgaben je Kurs, je nachdem, wie es läuft (serieUm).
 //     Kurz genug, dass die Kurse durchmischt bleiben (Abruf aus dem Inaktiven), lang genug, dass der Wechsel nicht
@@ -70,30 +73,6 @@ export function reihenfolge() {
   return S.rc.filter((c) => c.done && c.practice).sort((a, b) => rang(b) - rang(a));
 }
 const zahlText = (p) => [n_(p.faellig || 0, 'Thema', 'Themen') + ' fällig', p.luecken ? n_(p.luecken, 'offene Lücke', 'offene Lücken') : ''].filter(Boolean).join(' · ');
-// Karte „Wiederholen“ auf „Diese Woche“: Endloslauf über alle Kurse
-export function laufKarte() {
-  const r = reihenfolge();
-  const kopf = `<h3>${ico('target')}Wiederholen<span class="sp"></span><span class="muted mini">alle Kurse gemischt, ohne Ende</span></h3>`;
-  if (!r.length) return `<div class="card modus lauf" id="modus-wiederholen" style="--cc:var(--accent)">${kopf}<div class="modus-t">Noch nichts zu wiederholen</div>
-    <p class="modus-m">Wiederholen übt, was du schon gelernt hast. Nach der ersten erledigten Lektion geht es hier los.</p></div>`;
-  const war = r.filter((c) => schon(c)).map((c) => c.short);
-  const ges = r.reduce((a, c) => ({ faellig: a.faellig + ((c.practice || {}).faellig || 0), luecken: a.luecken + ((c.practice || {}).luecken || 0) }), { faellig: 0, luecken: 0 });
-  const p = portion(ges);
-  const chips = r.map((c) => `<button class="chip kurs-chip" style="${cc(c)}" data-ueben="kurs|${esc(c.key)}" title="${esc(c.name)}: ${esc(zahlText(c.practice || {}))}${c.avgScore != null ? ', Ø ' + c.avgScore + ' %' : ''}${sitzung(c) ? ' · Runde läuft' : ''}"><span class="dot"></span>${esc(c.short)}</button>`).join('');
-  return `<div class="card modus lauf" id="modus-wiederholen" style="${cc(r[0])}">${kopf}
-    <div class="modus-k"><span class="dot"></span>${esc(r[0].name)} zuerst</div>
-    <div class="modus-t">${p.offen ? `Heute dran: ${n_(p.offen, 'Aufgabe', 'Aufgaben')}` : 'Heute dran: geschafft'}</div>
-    <div class="modus-m">${esc([`${n_(ges.faellig, 'Thema', 'Themen')} fällig in ${n_(r.length, 'Kurs', 'Kursen')}`, ges.luecken ? n_(ges.luecken, 'offene Lücke', 'offene Lücken') : '', p.geuebt ? `heute ${n_(p.geuebt, 'Aufgabe', 'Aufgaben')} geübt` : ''].filter(Boolean).join(' · '))}</div>
-    <div class="lauf-in"><div class="lauf-kurse">${chips}</div><span class="sp"></span><button class="btn" data-lauf="kurz" title="Wiederholen mit einem Ring über 5 Minuten, danach siehst du, was du geschafft hast">${ico('clock')}Nur 5 Minuten</button><button class="btn primary" data-lauf="start">${ico('play')}Los</button></div>
-    <p class="muted mini">Start mit ${esc(r[0].short)}${war.length ? `; heute schon dran: ${esc(war.join(', '))}` : ', weil dort am meisten offen ist'}. Nach ein paar Aufgaben wechselt Lernhub von selbst den Kurs: Was fällig oder wacklig ist, kommt öfter. Es läuft, bis du aufhörst.</p></div>`;
-}
-// Portion für heute: so viele Aufgaben, wie Themen fällig oder Lücken offen sind, höchstens 8; was heute schon
-// geübt wurde, geht davon ab
-function portion(ges) {
-  const geuebt = Object.values(heuteAlle()).reduce((a, b) => a + b, 0);
-  const soll = Math.min(8, ges.faellig + ges.luecken);
-  return { soll, geuebt, offen: Math.max(0, soll - geuebt) };
-}
 // Karte „Wiederholen“ auf der Kursseite
 export function kursKarte(c) {
   const p = c.practice, s = sitzung(c);
@@ -103,7 +82,7 @@ export function kursKarte(c) {
   return `<div class="card modus" id="modus-wiederholen" style="${cc(c)}">${kopf}
     <div class="modus-t">${n_(p.faellig || 0, 'Thema', 'Themen')} fällig</div>
     <div class="modus-m">${esc([`von ${n_(p.themen || 0, 'Thema', 'Themen')}`, p.luecken ? n_(p.luecken, 'offene Lücke', 'offene Lücken') : 'keine offene Lücke', p.heute ? `heute ${n_(p.heute, 'Aufgabe', 'Aufgaben')}` : ''].filter(Boolean).join(' · '))}</div>
-    <div class="acts"><button class="btn primary" data-ueben="kurs|${esc(c.key)}">${ico('play')}${s ? 'Runde fortsetzen' : 'Wiederholen'}</button></div></div>`;
+    <div class="acts"><button class="btn primary" data-ueben="kurs|${esc(c.key)}">${ico('play')}${s ? 'Runde fortsetzen' : 'Wiederholen'}</button>${Sh.knopf(c)}</div></div>`;
 }
 // Ein Klick übt: zur Ansicht wechseln, eine offene Runde fortsetzen, sonst eine neue starten (ohne Endloslauf).
 export async function direkt(c) {
@@ -225,8 +204,6 @@ let kurzTakt = null;
 function kurzLaufen() { clearInterval(kurzTakt); if (S.lauf && S.lauf.kurz) kurzTakt = setInterval(() => { if (!S.lauf || !S.lauf.kurz) return clearInterval(kurzTakt); kurzTick(); }, 1000); }
 
 document.addEventListener('click', (e) => {
-  if (e.target.closest('[data-lauf="kurz"]')) return laufStart({ kurz: true });
-  if (e.target.closest('[data-lauf="start"]')) return laufStart();
   const b = e.target.closest('[data-ueben]');
   if (b) { const c = S.byKey[b.dataset.ueben.split('|')[1]]; if (c) direkt(c); }
 });
@@ -235,33 +212,8 @@ window.addEventListener('pagehide', merken);
 const sitzung = (c) => S.ueb[c.key] || null;
 const offeneAufgabe = (s) => (s ? [...s.verlauf].reverse().find((v) => v.art === 'aufgabe' && v.offen) : null);
 
-// ---------------------------------------------------------------- Markdown (klein: Absätze, Listen, Code, fett)
-export function md(t) {
-  const teile = String(t || '').replace(/\r/g, '').split(/```/);
-  return teile.map((p, i) => {
-    if (i % 2) { const code = p.replace(/^[\w+-]*\n/, '').replace(/\n$/, ''); return `<pre class="ueb-code">${esc(code)}</pre>`; }
-    return p.split(/\n{2,}/).map((block) => {
-      const zeilen = block.split('\n').filter((z) => z.trim() !== '');
-      if (!zeilen.length) return '';
-      // Code-Spans zuerst herauslösen, damit Sternchen darin (*.md) unangetastet bleiben; nur **fett**, keine Kursivschrift
-      const inline = (z) => z.split(/(`[^`]+`)/).map((x, j) => (j % 2 ? `<code>${esc(x.slice(1, -1))}</code>`
-        : esc(x).replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>'))).join('');
-      // einfache Tabelle: Zeilen mit |, zweite Zeile ist die Trennzeile
-      if (zeilen.length >= 2 && zeilen.every((z) => z.includes('|')) && /^[\s|:-]+$/.test(zeilen[1]) && zeilen[1].includes('-')) {
-        const zellen = (z) => z.trim().replace(/^\||\|$/g, '').split('|').map((x) => inline(x.trim()));
-        return `<table class="ueb-tab"><tr>${zellen(zeilen[0]).map((x) => `<th>${x}</th>`).join('')}</tr>${zeilen.slice(2).map((z) => `<tr>${zellen(z).map((x) => `<td>${x}</td>`).join('')}</tr>`).join('')}</table>`;
-      }
-      // aufeinanderfolgende Listenzeilen werden eine Liste, alles andere Absätze (auch „Satz, direkt darunter die Liste“)
-      const LI = /^\s*([-*]|\d+[.)])\s+/, teile = [];
-      for (const z of zeilen) {
-        const art = LI.test(z) ? (/^\s*\d/.test(z) ? 'ol' : 'ul') : 'p', letzter = teile[teile.length - 1];
-        if (letzter && letzter.art === art) letzter.z.push(z); else teile.push({ art, z: [z] });
-      }
-      return teile.map((t) => (t.art === 'p' ? `<p>${t.z.map(inline).join('<br>')}</p>`
-        : `<${t.art} class="ueb-liste">${t.z.map((z) => `<li>${inline(z.replace(LI, ''))}</li>`).join('')}</${t.art}>`)).join('');
-    }).join('');
-  }).join('');
-}
+// Markdown samt Bausteinen: src/ui/js/md.js (hier weiter exportiert für lernen.js und sync.js)
+export { md };
 
 // ---------------------------------------------------------------- Bausteine
 const ERG = {

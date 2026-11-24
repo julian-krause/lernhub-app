@@ -11,7 +11,7 @@ process.stdin.on('end', () => {
     gelernt: ['Punkt eins', 'Punkt zwei', 'Punkt drei'], offen: ['Lücke bei **Tags**'], nachlesen: ['Reflog, F. 60'], kernaussage: 'Kette sitzt, Tags wackeln',
     schritte: [{ titel: 'Schritt A', thema: 'test-thema-a', kern: 'Kern A: gilt, weil `x`.' }, { titel: 'Schritt B', thema: 'test-thema-b', kern: 'Kern B.' }] };
   let x;
-  if (/\[Uni-Lektion\]/.test(ein)) x = { art: 'frage', plan: ['Schritt A', 'Schritt B', 'Schritt C'], schritt: 1, text: 'Schritt-1-Unterricht: **HEAD** zeigt auf einen Branch.',
+  if (/\[Uni-Lektion\]/.test(ein)) x = { art: 'frage', plan: ['Schritt A', 'Schritt B', 'Schritt C'], schritt: 1, text: 'Schritt-1-Unterricht: **HEAD** zeigt auf einen Branch.\n\n```kette\ngit switch dev\nHEAD ↑ | gut: zeigt auf refs/heads/dev\nCommit ↑ | schlecht: Branch rückt vor\n```\n\nDanach geht es weiter.',
     rolle: 'pruefung', frage: 'Worauf zeigt `HEAD` nach `git switch dev`?', optionen: ['auf den Commit', 'auf refs/heads/dev', 'auf den Tree'], richtig: 1, erklaerung: 'GEHEIM-ERKL-1: HEAD ist eine symbolische Referenz.' };
   else if (/^Rückfrage, während Frage/.test(ein)) x = { art: 'text', text: 'Kurze Antwort auf die Rückfrage.', bewertung: 'keine' };
   else if (/^Antwort auf Frage 1 /.test(ein)) x = { art: 'frage', schritt: 2, text: 'Auflösung 1. Jetzt eine Vorhersage.', rolle: 'vorhersage',

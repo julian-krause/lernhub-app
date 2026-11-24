@@ -37,7 +37,7 @@ plutil -replace CFBundleIconFile -string "lernhub.icns" "$P"
 plutil -replace CFBundleShortVersionString -string "$VERSION" "$P"
 plutil -replace CFBundleVersion -string "$VERSION" "$P"
 plutil -replace LSApplicationCategoryType -string "public.app-category.education" "$P"
-plutil -replace NSMicrophoneUsageDescription -string "Lernhub schreibt beim Diktieren mit, was du sagst, und setzt es ins Antwortfeld." "$P"
+plutil -replace NSMicrophoneUsageDescription -string "Lernhub hört zu, wenn du diktierst oder in der Sprechstunde mit dem Tutor sprichst." "$P"
 plutil -remove NSCameraUsageDescription "$P" 2>/dev/null || true
 plutil -replace NSHumanReadableCopyright -string "Lernhub · kurs-tutor" "$P"
 

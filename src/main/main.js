@@ -1,7 +1,8 @@
 // Lernhub · Hauptprozess
 //   Fenster mit Seitenleiste (app://ui/…), Brücke zu den kurs-tutor-Skripten, die beiden Lernmodi „Lernen“ und
-//   „Wiederholen“ (Sitzungen über claude -p), der ILIAS-Sync (claude -p) und das Diktieren (Deepgram).
-const { app, BrowserWindow, Menu, ipcMain, protocol, session, shell, systemPreferences, net, Notification } = require('electron');
+//   „Wiederholen“ (Sitzungen über claude -p), die Sprechstunde (Wiederholen per Sprache, GPT-Live), der ILIAS-Sync
+//   (claude -p) und das Diktieren (Deepgram).
+const { app, BrowserWindow, Menu, ipcMain, protocol, session, shell, systemPreferences, net, Notification, powerSaveBlocker } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { pathToFileURL, fileURLToPath } = require('url');
@@ -20,6 +21,7 @@ const { DeepgramStrom } = require('./deepgram');
 const { Ueben } = require('./ueben');
 const { Lernen } = require('./lernen');
 const { Sync } = require('./sync');
+const { Sprechstunde } = require('./sprechstunde');
 
 const UI = path.join(__dirname, '..', 'ui');
 
@@ -140,16 +142,19 @@ function leiteUm(url) {
 // ---------------------------------------------------------------- Diktieren (Deepgram)
 // Im Feld von „Lernen“ und „Wiederholen“: Der Ton kommt aus der Oberfläche, der Text geht dorthin zurück.
 let diktat = null;
-async function mikrofonPruefen() {
-  const key = S.lesen();
-  if (!key) throw new Error('Kein Deepgram-Schlüssel. In den Einstellungen eintragen.');
-  if (process.platform === 'darwin' && !process.env.LERNHUB_FAKE_AUDIO) {
+async function mikrofonFrei() {
+  if (process.platform === 'darwin' && !process.env.LERNHUB_FAKE_AUDIO && !process.env.LERNHUB_TEST) {
     const st = systemPreferences.getMediaAccessStatus('microphone');
     if (st !== 'granted') {
       const ok = await systemPreferences.askForMediaAccess('microphone');
       if (!ok) throw new Error('Kein Zugriff aufs Mikrofon. Systemeinstellungen → Datenschutz → Mikrofon → Lernhub.');
     }
   }
+}
+async function mikrofonPruefen() {
+  const key = S.lesen();
+  if (!key) throw new Error('Kein Deepgram-Schlüssel. In den Einstellungen eintragen.');
+  await mikrofonFrei();
   return key;
 }
 async function diktatStart() {
@@ -170,13 +175,29 @@ async function diktatStopp() {
 }
 
 // ---------------------------------------------------------------- Wiederholen, Lernen, ILIAS-Sync (claude -p)
-let ueb = null, lern = null, sync = null;
+let ueb = null, lern = null, sync = null, sprech = null;
+let wach = null;                  // powerSaveBlocker während der Sprechstunde: Bildschirm bleibt an
+// Tests mit LERNHUB_LIVE_ATTRAPPE: ohne Schlüsselbund, OpenAI wird nicht angerufen
+const liveAttrappe = !!(process.env.LERNHUB_TEST && process.env.LERNHUB_LIVE_ATTRAPPE);
+const openaiDa = () => liveAttrappe || S.openai.gesetzt();
+const openaiSchluessel = () => (liveAttrappe ? 'test-schluessel' : S.openai.lesen());
+function wachHalten(an) {
+  try {
+    if (an && wach == null) wach = powerSaveBlocker.start('prevent-display-sleep');
+    if (!an && wach != null) { powerSaveBlocker.stop(wach); wach = null; }
+  } catch (e) { console.error('powerSaveBlocker:', e.message); }
+}
 function modiBereit() {
   const ordner = (n) => path.join(app.getPath('userData'), n);
   // beiEnde: ueben.py hat Fälligkeiten geändert → Kursdaten neu laden
   ueb = new Ueben({ ordner: ordner('ueben'), beiStand: (s) => an('ueben', s), beiEnde: () => geaendert() });
   // beiErledigt: Lektion ist in der Roadmap eingetragen → Kursdaten neu laden
   lern = new Lernen({ ordner: ordner('lernen'), beiStand: (s) => an('lernen', s), beiErledigt: () => geaendert() });
+  // Sprechstunde: Ton läuft in der Oberfläche (WebRTC), Schlüssel und Sitzungsanlage hier
+  sprech = new Sprechstunde({
+    ordner: ordner('sprechstunde'), schluessel: openaiSchluessel, wachHalten,
+    beiStand: (s) => an('sprechstunde', s), beiSenden: (x) => an('sprechstunde:senden', x), beiEnde: () => geaendert(),
+  });
   sync = new Sync({
     ordner: ordner('sync'),
     beiStand: (s) => an('sync', s),
@@ -209,14 +230,48 @@ function ipc() {
   ipcMain.handle('ueben:nochmal', mitKurs((c) => ueb.nochmal(c.ws)));
   ipcMain.handle('ueben:beenden', mitKurs((c) => ueb.beenden(c.ws)));
 
-  const lernStand = (c) => ({ sitzung: lern.fuer(c.ws), ziel: lern.ziel(c) });
+  // Sprechstunde. Jeder Aufruf fängt seine Fehler: Die Oberfläche bekommt immer eine Antwort, nie eine Ausnahme.
+  const sicher = (fn, leer = { ok: false, text: 'Das ging gerade nicht.' }) => async (...a) => {
+    try { return await fn(...a); } catch (err) { console.error('Sprechstunde:', err); return { ...leer, text: leer.text + ' (' + kurz(err) + ')' }; }
+  };
+  ipcMain.handle('sprechstunde:stand', () => sprech.sicht());
+  ipcMain.handle('sprechstunde:vorbereiten', mitKurs((c) => {
+    if (!openaiDa() || sprech.laeuft()) return { ok: true };
+    sprech.vorbereiten(c).catch(() => { });            // im Hintergrund, Karten liegen dann im Cache
+    return { ok: true };
+  }));
+  ipcMain.handle('sprechstunde:starten', mitKurs(sicher(async (c) => {
+    if (!openaiDa()) return { ok: false, schluessel: false, text: 'Für die Sprechstunde fehlt der OpenAI-Schlüssel (Einstellungen).' };
+    await mikrofonFrei();
+    return sprech.starten(c);
+  })));
+  ipcMain.handle('sprechstunde:verbinden', sicher((e, x) => sprech.verbinden(x && x.key, x && x.sdp, { nachAbriss: !!(x && x.nachAbriss), zuletzt: x && x.zuletzt })));
+  ipcMain.handle('sprechstunde:ereignis', sicher((e, x) => sprech.ereignis(x && x.key, x && x.ev), {}));
+  ipcMain.handle('sprechstunde:kontext', sicher((e, x) => sprech.kontext(x && x.key, x || {}), { ok: false }));
+  ipcMain.handle('sprechstunde:abriss', sicher((e, x) => sprech.abriss(x && x.key, x && x.grund), { ok: false, nochmal: false }));
+  ipcMain.handle('sprechstunde:fortsetzen', sicher((e, key) => sprech.fortsetzen(key)));
+  ipcMain.handle('sprechstunde:pause', sicher((e, x) => sprech.pause(x && x.key, !!(x && x.an))));
+  ipcMain.handle('sprechstunde:beenden', sicher((e, key) => sprech.beenden(key)));
+  ipcMain.handle('sprechstunde:zu', sicher((e, key) => { if (sprech.s && sprech.s.kurs === key) sprech.abschliessen(); return { ok: true }; }));
+  ipcMain.handle('sprechstunde:verwerfen', sicher((e, key) => sprech.verwerfen(key)));
+  ipcMain.handle('sprechstunde:einstellungen', (e, neu) => sprech.einstellungen(neu));
+  ipcMain.handle('openai:setzen', async (e, wert) => {
+    try { S.openai.setzen(wert); return { ok: true, ...(await S.openai.testen()) }; } catch (err) { return { ok: false, text: err.message }; }
+  });
+  ipcMain.handle('openai:testen', () => S.openai.testen());
+  ipcMain.handle('openai:loeschen', () => { S.openai.loeschen(); return true; });
+
+  const lernStand = (c) => ({ sitzung: lern.fuer(c.ws), ziel: lern.ziel(c), vorab: lern.vorabFuer(c.ws) });
   ipcMain.handle('lernen:uebersicht', () => Object.fromEntries(kurse().map((c) => [c.key, lernStand(c)])));
   ipcMain.handle('lernen:stand', mitKurs(lernStand, null));
-  ipcMain.handle('lernen:starten', mitKurs((c) => lern.starten(c, daten.semester.path)));
+  ipcMain.handle('lernen:starten', mitKurs((c, x) => lern.starten(c, daten.semester.path, { unendlich: !!(x && x.unendlich), fortsetzen: !!(x && x.fortsetzen) })));
+  ipcMain.handle('lernen:nachtragen', (_e, id) => lern.nachtragen(String(id || '')));
+  ipcMain.handle('lernen:vorbereiten', mitKurs((c) => lern.vorbereiten(c, daten.semester.path)));
   ipcMain.handle('lernen:senden', mitKurs((c, x) => lern.senden(c.ws, x.art, x.x || {})));
   ipcMain.handle('lernen:nochmal', mitKurs((c) => lern.nochmal(c.ws)));
   ipcMain.handle('lernen:beenden', mitKurs((c) => lern.beenden(c.ws)));
   ipcMain.handle('lernen:eintragen', mitKurs((c) => lern.eintragen(c.ws)));
+  ipcMain.handle('lernen:uhr', mitKurs((c, x) => lern.uhrStellen(c.ws, !!x.offen)));
 
   ipcMain.handle('sync:stand', () => sync.stand());
   ipcMain.handle('sync:starten', () => {
@@ -236,7 +291,7 @@ function ipc() {
   }));
   // safeStorage nur auf Wunsch abfragen: jeder Zugriff auf den Schlüsselbund kann nach einem Neubau
   // (neue ad-hoc-Signatur) einen macOS-Dialog auslösen. Beim Start reicht „gibt es die Schlüsseldatei?“.
-  ipcMain.handle('einstellungen', (e, mitSicher) => ({ schluessel: S.gesetzt(), sicher: mitSicher ? S.verfuegbar() : true }));
+  ipcMain.handle('einstellungen', (e, mitSicher) => ({ schluessel: S.gesetzt(), openai: openaiDa(), sicher: mitSicher ? S.verfuegbar() : true }));
   ipcMain.handle('schluessel:setzen', async (e, wert) => {
     try { S.setzen(wert); return { ok: true, ...(await S.testen()) }; } catch (err) { return { ok: false, text: err.message }; }
   });
@@ -304,7 +359,9 @@ function menue() {
       { label: 'Suchen …', accelerator: 'CmdOrCtrl+K', click: sende('suche') },
       { type: 'separator' },
       { label: 'Lernen starten', accelerator: 'CmdOrCtrl+L', click: sende('befehl', 'lernen') },
+      { label: 'Unendlich lernen', accelerator: 'CmdOrCtrl+Shift+U', click: sende('befehl', 'unendlich') },
       { label: 'Wiederholen starten', accelerator: 'CmdOrCtrl+Shift+W', click: sende('befehl', 'wiederholen') },
+      { label: 'Sprechstunde starten', accelerator: 'CmdOrCtrl+Shift+E', click: sende('befehl', 'sprechstunde') },
       { label: 'Diktieren an/aus', accelerator: 'CmdOrCtrl+Shift+L', click: sende('befehl', 'diktat') },
       { label: 'Fokus-Modus an/aus', accelerator: 'CmdOrCtrl+Shift+F', click: sende('befehl', 'fokus') },
       { label: 'Profil', click: sende('nav', { name: 'profil' }) },
@@ -354,7 +411,10 @@ app.whenReady().then(async () => {
 });
 
 app.on('before-quit', () => {
+  if (lern) lern.alleAnhalten();              // Lektionsuhren stehen, solange die App zu ist
   if (sync) sync.abbrechen();                 // schon geladene Dateien bleiben, der nächste Lauf macht weiter
   if (diktat) diktatStopp().catch(() => { });
+  if (sprech) sprech.aus();                   // Live-Sitzung schließen, Lernzeit buchen
+  wachHalten(false);
 });
 app.on('window-all-closed', () => { app.quit(); });

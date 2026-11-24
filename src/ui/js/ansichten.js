@@ -7,6 +7,7 @@ import * as Ln from './lernen.js';
 import * as U from './ueben.js';
 import * as Sy from './sync.js';
 import * as Sp from './spiel.js';
+import * as Sh from './sprechstunde.js';
 
 // Zustand einer Roadmap-Lektion für die Anzeige: erledigt, offen (geplant) oder wartet auf Material
 const zustand = (l) => (l.state === 'erledigt' ? 'erledigt' : l.state === 'Material folgt' ? 'ph' : 'geplant');
@@ -63,6 +64,90 @@ function hinweise() {
   return h.length ? `<div class="notes">${h.join('')}</div>` : '';
 }
 
+// ---------------------------------------------------------------- Diese Woche: Kurskarten
+// Je Kurs eine Karte mit zwei großen Kacheln: „Lernen“ (die Lektion, die dran ist) und „Wiederholen“ (was fällig ist).
+// Nichts Gemischtes: Jeder Kurs startet für sich. Die Reihenfolge bleibt wie in der Seitenleiste (⌘1 …); der Kurs, den
+// der Plan zuerst nähme (Ln.reihenfolge), bekommt das Band „Heute zuerst“ mit dem Grund.
+function klausur(c) {
+  const t = Math.round((pd(c.exam) - pd(S.d.today)) / 864e5);
+  const text = t < 0 ? 'Klausur vorbei' : t === 0 ? 'Klausur heute' : t === 1 ? 'Klausur morgen' : `Klausur in ${t} Tagen`;
+  return { t, text };
+}
+function wochenPunkte(c) {
+  const q = c.quota || 0;
+  if (!q) return '';
+  const dn = Math.min(c.doneThis || 0, q), voll = (c.doneThis || 0) >= q;
+  const anzeige = q <= 8 ? `<span class="kk-punkte">${Array.from({ length: q }, (_, i) => `<i class="${i < dn ? 'an' : ''}"></i>`).join('')}</span>`
+    : `<span class="kk-wbar"><i style="width:${dn / q * 100}%"></i></span>`;
+  return `<span class="kk-woche${voll ? ' voll' : ''}" title="Wochenpensum: ${c.doneThis} von ${q} Lektionen">${anzeige}<span>${voll ? ico('check') + 'Woche geschafft' : `${c.doneThis}/${q} diese Woche`}</span></span>`;
+}
+const live = (s, text) => `<span class="kk-live${s.zustand === 'denkt' ? ' denkt' : ''}">${s.zustand === 'denkt' ? 'Claude antwortet' : text}</span>`;
+
+function lernKachel(c) {
+  const d = Ln.dran(c);
+  if (!d) {
+    const fertig = c.total && c.done >= c.total;
+    return `<div class="kk-modus aus"><span class="kk-mk">${ico(fertig ? 'trophy' : 'grad')}Lernen</span>
+      <b class="kk-mt">${fertig ? 'Alles gelernt' : 'Gerade nichts dran'}</b><span class="kk-mm">${esc(Ln.grund(c) || (fertig ? 'Alle Lektionen sind erledigt.' : ''))}</span></div>`;
+  }
+  const s = d.sitzung, st = s ? Ln.sitzungStand(s) : null;
+  const kap = d.chapter ? (/^kap/i.test(String(d.chapter)) ? String(d.chapter) : 'Kap. ' + d.chapter) : '';
+  const meta = s ? st.text : [`ca. ${d.budget} Min.`, kap].filter(Boolean).join(' · ');
+  const marke = s ? live(s, 'läuft') : d.training ? `<span class="kk-boss">${ico('crown')}Klausurtraining</span>` : '';
+  return `<button class="kk-modus${s ? ' laeuft' : ''}" data-lernen="kurs|${esc(c.key)}" title="${esc(`${c.short} lernen: ${d.id} ${d.title}${d.sources ? ' · ' + d.sources : ''}`)}">
+    <span class="kk-mk">${ico('grad')}Lernen${marke}</span>
+    <b class="kk-mt"><span class="kk-id">${esc(d.id)}</span> ${esc(d.title)}</b>
+    <span class="kk-mm">${esc(meta)}</span>
+    ${s ? `<span class="kk-uhr"><i style="width:${Math.round(st.anteil * 100)}%"></i></span>` : ''}
+    <span class="kk-go los">${ico('play')}${s ? 'Weiterlernen' : 'Lernen'}</span></button>`;
+}
+
+function wiederholKachel(c, haupt) {
+  const p = c.practice, s = S.ueb[c.key];
+  if (!c.done || !p) {
+    return `<div class="kk-modus aus"><span class="kk-mk">${ico('target')}Wiederholen</span>
+      <b class="kk-mt">Noch nichts zu wiederholen</b><span class="kk-mm">Geht los nach der ersten erledigten Lektion.</span></div>`;
+  }
+  const f = p.faellig || 0, lk = p.luecken || 0, th = p.themen || 0;
+  const meta = [lk ? n_(lk, 'offene Lücke', 'offene Lücken') : 'keine offene Lücke', p.heute ? `heute ${n_(p.heute, 'Aufgabe', 'Aufgaben')}` : ''].filter(Boolean).join(' · ');
+  const frisch = th ? Math.round(Math.max(0, th - f) / th * 100) : 0;
+  return `<button class="kk-modus${s ? ' laeuft' : ''}" data-ueben="kurs|${esc(c.key)}" title="${esc(`${c.short} wiederholen: ${f} von ${n_(th, 'Thema', 'Themen')} fällig${lk ? ', ' + n_(lk, 'offene Lücke', 'offene Lücken') : ''}`)}">
+    <span class="kk-mk">${ico('target')}Wiederholen${s ? live(s, 'Runde läuft') : ''}</span>
+    <b class="kk-mt">${f ? `${n_(f, 'Thema', 'Themen')} fällig` : 'Alles frisch'}</b>
+    <span class="kk-mm${lk ? ' warn' : ''}">${esc(meta)}</span>
+    <span class="kk-frisch" title="${frisch} % der Themen sind gerade frisch, der Rest ist fällig"><i style="width:${frisch}%"></i></span>
+    <span class="kk-go${haupt ? ' los' : ''}">${ico('refresh')}${s ? 'Fortsetzen' : 'Wiederholen'}</span></button>`;
+}
+
+function kursKachel(c, empf) {
+  const k = klausur(c), pc = c.total ? Math.round(c.done / c.total * 100) : 0;
+  const fakten = [
+    `<span class="kk-f${k.t >= 0 && k.t <= 14 ? ' warn' : ''}" title="Klausur am ${fDMY(pd(c.exam))}">${ico('calendar')}${k.text}${c.examAssumed ? ' (angenommen)' : ''}</span>`,
+    c.avgScore != null ? `<span class="kk-f" title="Ø beim ersten Versuch, Ziel ${c.targetPercent} %">${ico('star')}Ø ${c.avgScore} %</span>` : '',
+    c.alarm ? `<span class="kk-f warn" title="Das Pensum ist deutlich gestiegen">${ico('alert')}Rückstand</span>` : '',
+  ].join('');
+  return `<article class="kk${empf ? ' empf' : ''}" style="${cc(c)}">
+    ${empf ? `<div class="kk-empf" title="Heute zuerst, ${esc(empf)}"><b>${ico('sparkles')}Heute zuerst</b><span>${esc(empf)}</span></div>` : ''}
+    <button class="kk-kopf" data-nav="kurs:${c.slug}" title="${esc(c.name)}: Pfad, Liste, Material, Lücken">
+      <span class="kk-em">${esc(c.emoji || '📘')}</span>
+      <span class="kk-name"><b>${esc(c.short)}${ico('chevron')}</b><span>${c.name !== c.short ? esc(c.name) + ' · ' : ''}${c.done} von ${c.total} Lektionen</span></span>
+      <span class="kk-ring" style="--p:${pc}" title="${pc} % des Semesters geschafft"><span><b class="num">${pc}</b><small>%</small></span></span>
+    </button>
+    <div class="kk-fakten">${fakten}${wochenPunkte(c)}</div>
+    <div class="kk-modi">${lernKachel(c)}${wiederholKachel(c, !Ln.dran(c))}</div>
+    ${Sh.knopf(c, { klein: true })}
+  </article>`;
+}
+
+function kursListe() {
+  const erst = Ln.reihenfolge()[0];
+  const karten = S.rc.map((c) => kursKachel(c, erst && erst.c === c ? Ln.warum(erst) : '')).join('');
+  const ohne = S.plain.length ? `<div class="kk-ohne"><span class="muted">Ohne Roadmap</span>${S.plain.map((c) => `<button class="btn sm ghost" data-url="${esc(c.folderUrl)}" title="Ordner öffnen">${ico('folder')}${esc(c.short)}</button>`).join('')}</div>` : '';
+  const strom = erst ? `<button class="btn sm strom-los" data-lernen="unendlich" title="Unendlich-Modus: Lektion für Lektion nach dem Plan, ohne Pause; ist kein neuer Stoff mehr da, geht es ins Wiederholen (⌘⇧U)"><span class="strom-zeichen">∞</span>Unendlich lernen</button>` : '';
+  return `<section class="kurse-home" id="kurse"><h2 class="sec-h">Deine Kurse <span class="muted">Lernen bringt neuen Stoff, Wiederholen festigt, was du schon kannst</span>${strom}</h2>
+    <div class="kk-raster">${karten}</div>${ohne}</section>`;
+}
+
 // ---------------------------------------------------------------- Diese Woche
 export function woche() {
   const d = S.d, st = d.stats, mon = pd(d.semester.monday), heute = pd(d.today);
@@ -88,21 +173,8 @@ export function woche() {
     lt = `<div class="card"><h3>${ico('calendar')}Nächster Lerntag<span class="sp"></span><button class="btn sm ghost" data-nav="lerntag">Ansehen${ico('chevron')}</button></h3>
       <div class="lt-tag">${fWTL(tag)}, ${fDM(tag)}${+tag === +heute ? ' · heute' : ''}</div>
       <div class="muted lt-zeit">${esc(ag.events[0] ? ag.events[0].start : '')}–${esc(ag.events.length ? ag.events[ag.events.length - 1].end : '')} · ${n_(bl.length, 'Block', 'Blöcke')}</div>
-      <div class="bars">${bl.map((e) => { const c = S.byKey[e.course]; return `<div class="bar-row" style="${cc(c)}"><span class="nm"><span class="dot"></span>${esc(c ? c.short : e.course || '')}</span><span class="muted">${esc(e.start)}–${esc(e.end)} · ${n_(e.lessons.length, 'Lektion', 'Lektionen')}</span><span></span></div>`; }).join('')}</div></div>`;
+      <div class="bars">${bl.map((e) => { const c = S.byKey[e.course]; return `<div class="bar-row" style="${cc(c)}"><span class="nm"><span class="dot"></span>${esc(c ? c.short : e.course || '')}</span><span class="muted">${esc(e.start)}–${esc(e.end)} · ${dauer(blockMin(e))}</span><span></span></div>`; }).join('')}</div>${realKurz()}</div>`;
   }
-
-  // Fortschritt im Semester: je Kurs erledigte von allen Lektionen der Roadmap
-  const ges = S.rc.reduce((a, c) => ({ done: a.done + c.done, total: a.total + c.total }), { done: 0, total: 0 });
-  const fort = `<div class="card"><h3>${ico('flag')}Fortschritt im Semester<span class="sp"></span><span class="muted num">${ges.done} von ${ges.total} Lektionen · ${ges.total ? Math.round(ges.done / ges.total * 100) : 0} %</span></h3>
-    <div class="fort">${S.rc.map((c) => {
-    const pc = c.total ? c.done / c.total * 100 : 0;
-    const nx = Ln.dran(c);
-    const info = [c.avgScore != null ? `Ø ${c.avgScore} %` : '', c.alarm ? 'Rückstand' : '', `Klausur ${fDM(pd(c.exam))}`].filter(Boolean).join(' · ');
-    return `<button class="fort-row" data-nav="kurs:${c.slug}" style="${cc(c)}" title="${esc(c.name)}: ${c.done} von ${c.total} Lektionen erledigt">
-      <span class="nm"><span class="dot"></span>${esc(c.short)}</span><span class="bar"><i style="width:${pc}%"></i></span>
-      <span class="v num"><b>${Math.round(pc)} %</b> · ${c.done}/${c.total}</span><span class="inf${c.alarm ? ' warn' : ''}">${esc(info)}</span>
-      <span class="nx">${nx ? `als Nächstes: ${esc(nx.id)} ${esc(nx.title)}` : esc(Ln.grund(c) || 'alles erledigt')}</span></button>`;
-  }).join('')}</div></div>`;
 
   // Lernzeit: gemessene Minuten der abgeschlossenen Lektionen (roadmap.json) plus Übungszeit aus „Wiederholen“ (uebung.json)
   const hm = (m) => (m >= 60 ? `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} Min.` : `${m} Min.`);
@@ -131,10 +203,9 @@ export function woche() {
       <p class="sub">KW ${isoWeek(mon)} · ${fDM(mon)}–${fDM(addDays(mon, 6))} · ${esc(d.semester.title)}${wochenBis != null ? ` · noch ${wochenBis} Wochen bis zu den Prüfungen` : ''}</p></div>
     ${Sp.leiste()}
     ${hinweise()}
+    ${kursListe()}
     ${Sp.questKarte()}
-    <div class="modi">${Ln.karte()}${U.laufKarte()}</div>
     <div class="grid2">${pensum}${lt}</div>
-    ${fort}
     ${lernzeit}
     <h2 class="sec-h">ILIAS</h2>
     ${Sy.karte()}
@@ -145,6 +216,29 @@ export function woche() {
 }
 
 // ---------------------------------------------------------------- Nächster Lerntag
+// Im Kalender stehen nur Lernblöcke (Kurs und Zeit). Der Realismus-Check (tutor.py realismus, S.d.realismus)
+// prüft, ob das Pensum in die Blöcke passt, ob es zu deinem Tempo passt und ob ein Tag überladen ist.
+const blockMin = (e) => Math.round((e.endTs - e.startTs) / 60);
+const dauer = (m) => (m >= 60 ? `${Math.floor(m / 60)} h${m % 60 ? ' ' + String(m % 60).padStart(2, '0') : ''}` : `${m} Min.`);
+function realKurz() {
+  const r = S.d.realismus;
+  if (!r) return '';
+  const w = r.hinweise.filter((h) => h.art === 'warnung').length;
+  return `<button class="real-kurz${w ? ' warn' : ''}" data-nav="lerntag">${ico(w ? 'alert' : 'check')}${w ? `Realismus-Check: ${n_(w, 'Warnung', 'Warnungen')}` : 'Realismus-Check: passt'}</button>`;
+}
+function realCheck() {
+  const r = S.d.realismus;
+  if (!r) return '';
+  const w = r.woche, t = w.tempo;
+  const kacheln = `<div class="zeit-kacheln${t ? '' : ' zwei'}"><div><b class="num">${dauer(w.minuten)}</b><span>in ${n_(w.bloecke, 'Lernblock', 'Lernblöcken')} diese Woche</span></div>
+    <div><b class="num">${dauer(w.pensumMin)}</b><span>braucht das Pensum (${n_(w.lektionen, 'Lektion', 'Lektionen')})</span></div>
+    ${t ? `<div><b class="num">${dauer(t.minuten)}</b><span>schaffst du im Schnitt je Woche (letzte ${t.wochen})</span></div>` : ''}</div>`;
+  const liste = r.hinweise.length
+    ? `<ul class="real-liste">${r.hinweise.map((h) => { const c = h.kurs ? S.byKey[h.kurs] : null; return `<li class="${h.art}" style="${cc(c)}">${ico(h.art === 'warnung' ? 'alert' : 'clock')}<span><b>${esc(h.titel)}</b><span class="muted">${esc(h.text)}</span></span></li>`; }).join('')}</ul>`
+    : `<p class="real-ok">${ico('check')}Realistisch: Alles hat Platz, kein Tag ist überladen, das Pensum passt zu deinem Tempo.</p>`;
+  return `<h2 class="sec-h">Realismus-Check <span class="muted">Passen die Lernblöcke zu Pensum, freier Zeit und deinem Tempo?</span></h2>
+    <div class="card real">${kacheln}${liste}</div>`;
+}
 function diagramm() {
   const wk = S.d.stats.weeks || [];
   if (!wk.length) return '';
@@ -188,26 +282,20 @@ export function lerntag() {
   if (ag) {
     const tag = pd(ag.date);
     const zuerst = ((Ln.reihenfolge()[0] || {}).c || {}).key;      // der Kurs, den „Los“ zuerst nähme
-    body = `<div><h1 class="title">${fWTL(tag)}, ${fDMY(tag)}</h1><p class="sub">Kalender „${esc(d.calendar.name)}“ · Start ${esc(d.calendar.start)} Uhr · gleicht sich bei jedem Abschluss selbst ab</p></div>
+    body = `<div><h1 class="title">${fWTL(tag)}, ${fDMY(tag)}</h1><p class="sub">Kalender „${esc(d.calendar.name)}“ · Start ${esc(d.calendar.start)} Uhr · nur Lernblöcke, was dran ist, entscheidet „Lernen“</p></div>
     <div class="agenda">${ag.events.map((e) => {
       const c = e.course ? S.byKey[e.course] : null;
       const block = e.kind === 'block' || e.kind === 'probe';
       const dran = c ? Ln.dran(c) : null;
-      const ls = block && c ? `<div class="ls">${e.lessons.map((id) => {
-        const l = c.byId[id];
-        if (!l) return `<span class="lchip">${esc(id)}</span>`;
-        const text = `${esc(id)} ${esc(l.title.length > 34 ? l.title.slice(0, 33) + '…' : l.title)}`;
-        const titel = `title="${esc(l.title)} · ${ZUSTAND[zustand(l)]}"`;
-        if (dran && dran.id === id) return `<button class="lchip jetzt" data-lernen="kurs|${esc(c.key)}" ${titel}>${ico('play')}${text}</button>`;
-        if (l.state === 'erledigt') return `<span class="lchip erledigt" ${titel}>${ico('check')}${text}</span>`;
-        return `<span class="lchip" ${titel}>${text}</span>`;
-      }).join('')}</div>` : '';
+      const titel = e.kind === 'probe' ? `Probeklausur · ${c ? c.short : ''}` : c ? `${c.short} · Lernblock` : e.title;
+      const unter = block ? `<div class="muted ev-sub">${dauer(blockMin(e))}${e.kind === 'block' ? ' Lernzeit' : ' unter Klausurbedingungen'}${e.nachholen ? ' · nachholen' : ''}</div>` : '';
       return `<div class="ev ${block ? 'block' : e.kind === 'lunch' ? 'pause' : ''}" style="${cc(c)}"><div class="zeit">${esc(e.start)}<small>bis ${esc(e.end)}</small></div>
-        <div><div class="ttl">${esc(e.title)}${e.moved ? ' <span class="chip">von dir verschoben</span>' : ''}</div>${ls}</div>
+        <div><div class="ttl">${esc(titel)}${e.moved ? ' <span class="chip">von dir verschoben</span>' : ''}</div>${unter}</div>
         <div class="ev-akt">${c && dran ? `<button class="btn sm${zuerst === c.key ? ' primary' : ''}" data-lernen="kurs|${esc(c.key)}">${ico('play')}${dran.sitzung ? 'Weiterlernen' : 'Lernen'}</button>` : ''}${c ? `<button class="btn sm ghost" data-nav="kurs:${c.slug}">Kurs</button>` : ''}</div></div>`;
     }).join('')}</div>`;
   }
   return kopf('Nächster Lerntag', knoepfe) + `<div class="view"><div class="wrap stack">${body}
+    ${realCheck()}
     <h2 class="sec-h">Pensum bis zur Klausur <span class="muted">geplante Minuten je Woche, aus den Roadmaps</span></h2>
     <div class="card">${diagramm()}</div>
     <h2 class="sec-h">Abgleich</h2><div class="acts-grid">${aktionen('native').map(aktKarte).join('')}</div>
@@ -357,6 +445,7 @@ export function einstellungen(e, info) {
         <div class="field"><button class="btn sm" id="dg-test" ${e.schluessel ? '' : 'disabled'}>Testen</button><button class="btn sm ghost" id="dg-del" ${e.schluessel ? '' : 'disabled'}>Entfernen</button><span id="dg-msg" class="muted"></span></div>
         <p class="muted">Modell nova-3, Sprache Deutsch. Ton geht direkt an Deepgram, nur während du diktierst.</p>
       </div></div>
+    ${Sh.einstellungenKarte(e)}
     <div class="card"><h3>${ico('link')}Verbindung</h3><dl class="kv">
       <dt>Studienordner</dt><dd class="sel">${esc(info.root || 'nicht gefunden (kurs-tutor: KURSTUTOR_ROOT)')}</dd>
       <dt>Semester</dt><dd class="sel">${esc(S.d ? S.d.semester.path : '')}</dd>
@@ -366,7 +455,7 @@ export function einstellungen(e, info) {
       <dt>Abschließen</dt><dd>${info.direkt ? 'direkt über tutor.py (Testmodus oder Kurs-Tutor-App fehlt)' : 'über die Kurs-Tutor-App: Roadmap, Kalender und Lernhub ziehen nach'}</dd>
       <dt>Version</dt><dd>${esc(info.version)}</dd></dl></div>
     <div class="card"><h3>${ico('grid')}Tastenkürzel</h3><div class="keys">
-      <kbd>⌘ L</kbd><span>Lernen: die Lektion, die nach dem Plan dran ist</span><kbd>⌘ ⇧ W</kbd><span>Wiederholen: alle Kurse gemischt</span>
+      <kbd>⌘ L</kbd><span>Lernen: die Lektion, die nach dem Plan dran ist</span><kbd>⌘ ⇧ U</kbd><span>Unendlich lernen: Lektion für Lektion ohne Pause</span><kbd>⌘ ⇧ W</kbd><span>Wiederholen: alle Kurse gemischt</span><kbd>⌘ ⇧ E</kbd><span>Sprechstunde: Wiederholen per Sprache</span>
       <kbd>⌘ K</kbd><span>Suchen: Kurse, Lernen, Wiederholen, Aktionen</span><kbd>⌘ 0</kbd><span>Diese Woche</span><kbd>⌘ 1 … 6</kbd><span>Kurse</span>
       <kbd>⌘ ⇧ T</kbd><span>Nächster Lerntag</span><kbd>⌘ ⇧ L</kbd><span>Diktieren an/aus (im Lernen und Wiederholen)</span>
       <kbd>⌘ ⇧ S</kbd><span>Plan & Kalender abgleichen</span><kbd>⌘ R</kbd><span>Daten neu laden</span></div></div>

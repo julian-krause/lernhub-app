@@ -6,6 +6,7 @@ import * as U from './js/ueben.js';
 import * as Ln from './js/lernen.js';
 import * as Sy from './js/sync.js';
 import * as Sp from './js/spiel.js';
+import * as Sh from './js/sprechstunde.js';
 
 const L = window.lernhub;
 
@@ -49,13 +50,13 @@ async function neuLaden() {
 }
 
 // ---------------------------------------------------------------- Navigation
-const MODI = ['lernen', 'ueben'];
+const MODI = ['lernen', 'ueben', 'sprech'];
 function nav(r) {
   if (typeof r === 'string') r = parse(r);
   const wechsel = r.name !== S.route.name || r.slug !== S.route.slug;
   if (S.route.name === 'ueben' && wechsel) U.verlassen();          // Diktieren endet mit der Ansicht
-  if (S.route.name === 'lernen' && wechsel) Ln.verlassen();
-  if (r.name === 'lernen') { if (wechsel) Ln.betreten(); S.lernLauf = !!r.lauf; }
+  if (S.route.name === 'lernen' && wechsel) { Ln.verlassen(); Ln.weg(); }
+  if (r.name === 'lernen') { if (wechsel) Ln.betreten(r.slug); S.lernLauf = !!r.lauf; }
   S.route = r;
   zeichnen(); seitenleiste();
 }
@@ -91,6 +92,10 @@ async function zeichnen() {
     el.innerHTML = U.ansicht(c); zeichnen.letzte = r; U.verdrahten(c);
     return;
   }
+  else if (r.name === 'sprech' && c && c.hasRoadmap) {
+    el.innerHTML = Sh.ansicht(c); zeichnen.letzte = r; Sh.verdrahten(c);
+    return;
+  }
   else if (r.name === 'lernen' && c && c.hasRoadmap) {
     if (Ln.brauchtLaden(c)) await Ln.laden(c);
     if (S.route !== r) return;
@@ -101,7 +106,7 @@ async function zeichnen() {
     Ln.verdrahten(c, { scrollAlt });
     return;
   }
-  else if (r.name === 'einstellungen') html = V.einstellungen(await L.einstellungen(true), S.info);
+  else if (r.name === 'einstellungen') { await Sh.einstellungenLaden(); html = V.einstellungen(await L.einstellungen(true), S.info); }
   else if (r.name === 'profil') html = Sp.profil();
   else html = V.woche();
   const alt = el.querySelector('.view'), scroll = alt && S.route === zeichnen.letzte ? alt.scrollTop : 0;
@@ -113,7 +118,8 @@ async function zeichnen() {
     v.addEventListener('scroll', () => h && h.classList.toggle('scrolled', v.scrollTop > 4), { passive: true });
   }
   if (r.name === 'kurs' && r.tab === 'luecken' && c && c.hasRoadmap) lueckenLaden(c);
-  if (r.name === 'einstellungen') einstellungenVerdrahten();
+  if (r.name === 'einstellungen') { einstellungenVerdrahten(); Sh.einstellungenVerdrahten(); }
+  if (r.name === 'kurs' && c) Sh.vorbereiten(c);              // Sprechstunde: Karten im Hintergrund bereitlegen
 }
 
 async function lueckenLaden(c) {
@@ -146,6 +152,8 @@ function laufend() {
     const u = S.ueb[c.key];
     if (u) z.push({ c, modus: 'ueben', text: `${c.short} · wiederholen`, titel: `${c.name}: Runde fortsetzen`, denkt: u.zustand === 'denkt' });
   }
+  const sp = Sh.laufendEintrag();
+  if (sp) z.unshift(sp);
   return z;
 }
 function seitenleiste() {
@@ -163,7 +171,7 @@ function seitenleiste() {
   }).join('');
   const plain = S.plain.map((c) => `<button class="side-item" data-url="${esc(c.folderUrl)}" title="Ordner öffnen"><span class="em">${ico('folder')}</span><span class="lbl">${esc(c.short)}</span></button>`).join('');
   const lf = laufend().map((x) => `<button class="side-item side-open${on(x.modus, x.c.slug)}" data-nav="${x.modus}:${x.c.slug}" style="${cc(x.c)}" title="${esc(x.titel)}">
-      <span class="em">${x.denkt ? '<span class="rec" title="Claude antwortet"></span>' : ico(x.modus === 'lernen' ? 'grad' : 'target')}</span><span class="lbl">${esc(x.text)}</span></button>`).join('');
+      <span class="em">${x.denkt ? '<span class="rec" title="Claude antwortet"></span>' : ico(x.modus === 'lernen' ? 'grad' : x.modus === 'sprech' ? 'headset' : 'target')}</span><span class="lbl">${esc(x.text)}</span></button>`).join('');
   const stand = S.d.generated ? new Date(S.d.generated) : null;
   el.innerHTML = `<div class="side-top drag"></div>
     ${Sp.seitenKarte(r.name === 'profil')}
@@ -220,7 +228,10 @@ function suche() {
   if ($('.overlay')) return;
   const items = [
     { t: 'Lernen', a: 'die Lektion, die nach dem Plan dran ist', go: () => Ln.laufLos(), i: 'grad' },
+    { t: '∞ Unendlich lernen', a: 'Lektion für Lektion ohne Pause, danach Wiederholen (⌘⇧U)', go: () => Ln.unendlichLos(), i: 'grad' },
     { t: 'Wiederholen', a: 'alle Kurse gemischt', go: () => U.laufStart(), i: 'target' },
+    { t: 'Nur 5 Minuten wiederholen', a: 'alle Kurse gemischt, mit Ring', go: () => U.laufStart({ kurz: true }), i: 'clock' },
+    { t: 'Sprechstunde', a: 'Wiederholen per Sprache, freihändig', go: () => Sh.direkt(Sh.empfohlen(U.reihenfolge())), i: 'headset' },
     { t: 'Diese Woche', a: 'Ansicht', go: () => nav('woche'), i: 'sun' },
     { t: 'Nächster Lerntag', a: 'Ansicht', go: () => nav('lerntag'), i: 'calendar' },
     { t: 'Einstellungen', a: 'Ansicht', go: () => nav('einstellungen'), i: 'gear' },
@@ -228,6 +239,7 @@ function suche() {
     ...S.rc.map((c) => ({ t: c.name, a: 'Kurs', go: () => nav({ name: 'kurs', slug: c.slug }), c })),
     ...S.rc.map((c) => ({ c, d: Ln.dran(c) })).filter((x) => x.d).map(({ c, d }) => ({ t: `Lernen · ${c.short} · ${d.id} ${d.title}`, a: d.sitzung ? 'läuft' : 'Lernen', go: () => Ln.los(c), i: 'grad', c })),
     ...S.rc.filter((c) => c.done && c.practice).map((c) => ({ t: `Wiederholen · ${c.short}`, a: 'Wiederholen', go: () => U.direkt(c), i: 'target', c })),
+    ...S.rc.filter((c) => c.done && c.practice).map((c) => ({ t: `Sprechstunde · ${c.short}`, a: 'per Sprache', go: () => Sh.direkt(c), i: 'headset', c })),
     { t: 'ILIAS-Sync starten', a: 'läuft in der App', go: () => { nav('woche'); Sy.starten(); }, i: 'download' },
     ...S.d.actions.filter((x) => x.id !== 'ilias-sync').map((x) => ({ t: x.title, a: x.kind === 'claude' ? 'Claude Code' : 'Aktion', i: x.icon, go: () => L.aktion(x.url) })),
   ];
@@ -313,12 +325,16 @@ L.on.suche(() => suche());
 L.on.befehl((b) => {
   if (!S.d) return;
   if (b === 'lernen') Ln.laufLos();
+  else if (b === 'unendlich') Ln.unendlichLos();
   else if (b === 'wiederholen') U.laufStart();
+  else if (b === 'sprechstunde') { const c = Sh.empfohlen(U.reihenfolge()); if (c) Sh.direkt(c); else toast('Noch nichts zu wiederholen.'); }
   else if (b === 'diktat' && S.route.name === 'ueben') U.diktatUmschalten();          // ⌘⇧L: ins Feld diktieren
   else if (b === 'diktat' && S.route.name === 'lernen') Ln.diktatUmschalten();
   else if (b === 'fokus') { Sp.fokusUmschalten(); zeichnen(); seitenleiste(); toast(Sp.fokusAn() ? 'Fokus-Modus an: nur die Lektion.' : 'Fokus-Modus aus.'); }
 });
 L.on.ueben((x) => { U.stand(x); seitenleiste(); });
+L.on.sprech((x) => Sh.stand(x));
+L.on.sprechSenden((x) => Sh.ausMain(x));
 L.on.lernen((x) => Ln.stand(x).then(seitenleiste));
 L.on.sync((x) => { Sy.stand(x); seitenleiste(); });
 L.on.icloud((x) => {
@@ -331,12 +347,15 @@ L.on.icloud((x) => {
 (async function start() {
   seitenleiste();
   S.info = await L.info();
-  S.schluessel = (await L.einstellungen()).schluessel;
+  const ein = await L.einstellungen();
+  S.schluessel = ein.schluessel; S.openai = !!ein.openai;
   const hooks = { toast, nav: (r) => nav(r), zeichnen: () => zeichnen(), geaendert: uebersichtNeu, seitenleiste: () => seitenleiste() };
-  U.init(hooks); Ln.init(hooks); Sy.init(hooks); Sp.init(hooks);
+  U.init(hooks); Ln.init(hooks); Sy.init(hooks); Sp.init(hooks); Sh.init(hooks);
   await Sp.laden();
   await Sy.laden();
+  await Sh.laden();
   await laden();
+  Sh.wiederaufnehmen();
   seitenleiste(); await zeichnen();
   Sp.willkommen();                                    // einmal: was das Spiel aus dem bisherigen Verlauf schon weiß
   Sp.erinnern();                                      // Lernblock beginnt, Serie wird knapp

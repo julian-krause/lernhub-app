@@ -1,6 +1,6 @@
-// Ende-zu-Ende: Übersicht der App ohne Lektions-Fenster. „Diese Woche“ mit den Karten Lernen und Wiederholen,
-// Wochenpensum, Fortschritt, Lernzeit; Kursseite (Karten, Pfad, Liste, Lücken); Lerntag; Einstellungen; Suche;
-// „Los“ startet das Lernen sofort (claude -p als Attrappe). Kopie des Semesters, echte Daten bleiben unberührt.
+// Ende-zu-Ende: Übersicht der App ohne Lektions-Fenster. „Diese Woche“ mit einer Karte je Kurs (Lernen und
+// Wiederholen), Wochenpensum, Lernzeit; Kursseite (Karten, Pfad, Liste, Lücken); Lerntag; Einstellungen; Suche;
+// die Kachel „Lernen“ startet das Lernen sofort (claude -p als Attrappe). Kopie des Semesters, echte Daten bleiben unberührt.
 // Aufruf: node tests/e2e.mjs   (E2E_BILDER=<Ordner> legt Bildschirmfotos ab)
 import { _electron as electron } from 'playwright-core';
 import fs from 'fs';
@@ -25,7 +25,7 @@ const bild = async (name) => { if (BILDER) await win.screenshot({ path: path.joi
 const S = (e) => win.evaluate(new Function('return (' + e + ')'));
 
 try {
-  await win.waitForSelector('#modus-lernen', { timeout: 40000 });
+  await win.waitForSelector('#kurse .kk', { timeout: 40000 });
   await bild('0-willkommen');
   const hallo = await willkommenZu(win);
   check(/Level \d+/.test(hallo) && /Serie/.test(hallo) && /Abzeichen/.test(hallo), 'Begrüßung beim ersten Start: Level, Serie und Abzeichen aus dem bisherigen Verlauf');
@@ -34,20 +34,21 @@ try {
 
   // ---- Diese Woche
   const ganz = await text('#ansicht');
-  check((await win.$('#modus-lernen')) && (await win.$('#modus-wiederholen')), 'Diese Woche: Karten „Lernen“ und „Wiederholen“ nebeneinander');
-  const lernKarte = await text('#modus-lernen');
-  check(kurse.some((k) => k.offen && lernKarte.includes(k.offen + ' · ')) && /Los|Weiterlernen/.test(lernKarte), 'Karte „Lernen“ nennt Kurs und Lektion, die dran ist, mit „Los“');
-  check((await win.$$('#modus-lernen .kurs-chip')).length === kurse.length, 'Karte „Lernen“: ein Klick auf einen Kurs lernt dort (Chip je Kurs)');
-  check(/Start mit .+, (weil|zum Vorlernen)/.test(lernKarte), 'Karte sagt, warum sie mit diesem Kurs beginnt');
-  for (const t of ['Wochenpensum', 'Nächster Lerntag', 'Fortschritt im Semester', 'Lernzeit', 'ILIAS-Sync']) check((await text('.card h3')).includes(t), `Karte „${t}“ ist da`);
+  check((await win.$$('#kurse .kk')).length === kurse.length, `Diese Woche: eine Karte je Kurs (${kurse.length})`);
+  const jeKurs = await win.$$eval('#kurse .kk', (ks) => ks.map((k) => ({ lernen: !!k.querySelector('[data-lernen^="kurs|"]'), ueben: !!k.querySelector('[data-ueben^="kurs|"]'), aus: k.querySelectorAll('.kk-modus.aus').length, nav: !!k.querySelector('.kk-kopf[data-nav^="kurs:"]') })));
+  check(jeKurs.every((k) => (k.lernen ? 1 : 0) + (k.ueben ? 1 : 0) + k.aus === 2 && k.nav), 'jede Kurskarte: Kachel „Lernen“ und „Wiederholen“ (oder ein Hinweis, warum nicht), Kopf führt zum Kurs');
+  for (const k of kurse.filter((x) => x.done)) check((await win.$(`#kurse [data-ueben="kurs|${k.key}"]`)) !== null, `${k.short}: „Wiederholen“ startet direkt in diesem Kurs`);
+  const kursText = await text('#kurse');
+  check(kurse.some((k) => k.offen && kursText.includes(k.offen)) && /Lernen/.test(kursText) && /fällig|Alles frisch/.test(kursText), 'Kacheln nennen die Lektion, die dran ist, und was zum Wiederholen fällig ist');
+  check((await win.$$('#kurse .kk.empf')).length === 1 && /Heute zuerst/.test(await text('.kk.empf')) && /weil|Vorlernen/.test(await text('.kk-empf')), 'genau ein Kurs ist als „Heute zuerst“ markiert, mit Grund');
+  check(!(await win.$('#modus-lernen')) && !(await win.$('#modus-wiederholen')) && !(await win.$('[data-lauf]')) && !(await win.$('[data-lernen="lauf"]')) && !/gemischt/.test(ganz), 'nichts Gemischtes auf der Startseite: kein Lauf über alle Kurse');
+  for (const t of ['Wochenpensum', 'Nächster Lerntag', 'Lernzeit', 'ILIAS-Sync']) check((await text('.card h3')).includes(t), `Karte „${t}“ ist da`);
   check(!/Weitermachen|Wochenstart|Bereit zum Lernen|Erstellen|wird erstellt/.test(ganz), 'kein Weitermachen, kein Wochenstart, kein Erstellen, keine „bereiten Lektionen“');
   check(!(await win.$('webview')) && !(await win.$('#lektion')) && !(await win.$('.auftraege')), 'kein Lektions-Fenster und keine Auftragskarten im Dokument');
   check(!/GEÖFFNET/.test(await text('#sidebar')), 'Seitenleiste ohne „GEÖFFNET“');
   check(/Level \d+/.test(await text('#sidebar .side-spiel')) && /Woche/.test(await text('#sidebar .side-spiel')) && (await win.$('#sidebar .side-spiel .zring')) !== null, 'Seitenleiste: Karte mit Level, Rang, XP-Balken, Wochenserie und Tagesziel-Ring');
   check((await win.$$('.spiel-leiste .wp')).length === 7 && /Tagesziel/.test(await text('.spiel-leiste')) && /Serie/.test(await text('.spiel-leiste')), 'Startseite: Leiste mit Tagesziel, Wochenpunkten Mo–So, Serie und Level');
   check((await win.$$('.quests .quest')).length === 3 && (await win.$('.quests .truhe')) !== null, 'Startseite: Karte „Tagesquests“ mit drei Quests und Truhe');
-  check((await win.$$('#ansicht .btn.haupt')).length === 1 && (await win.$('#modus-lernen .btn.haupt')) !== null, 'Startseite: die einzige große Hauptaktion trägt die Karte „Lernen“');
-  check(/^Heute dran: /.test((await text('.lauf .modus-t')).trim()) && /fällig/.test(await text('.lauf .modus-m')), 'Karte „Wiederholen“: Überschrift nennt die Portion für heute, die Gesamtzahl steht klein darunter');
   check((await text('.acts-grid')).includes('Karteikarten') && !(await text('.acts-grid')).includes('ILIAS-Sync'), '„Mit Claude Code“: übrige Aktionen, der ILIAS-Sync hat seine eigene Karte');
   await bild('1-woche');
 
@@ -118,24 +119,25 @@ try {
   await win.evaluate(() => window.__lernhubTest.suche());
   await win.waitForSelector('.palette');
   const alle = await text('.palette li');
-  check(/Lernen\n?die Lektion/.test(alle) && /ILIAS-Sync starten/.test(alle) && !/Weitermachen|Wochenstart/.test(alle), 'Suche: Lernen, Wiederholen, ILIAS-Sync; kein Weitermachen, kein Wochenstart');
+  check(/Lernen\n?die Lektion/.test(alle) && /Nur 5 Minuten wiederholen/.test(alle) && /ILIAS-Sync starten/.test(alle) && !/Weitermachen|Wochenstart/.test(alle), 'Suche: Lernen, Wiederholen, ILIAS-Sync; kein Weitermachen, kein Wochenstart');
   await win.keyboard.press('Escape');
 
-  // ---- „Los“ lernt sofort
+  // ---- Kachel „Lernen“ lernt sofort
   await win.click('.side-item[data-nav="woche"]');
-  await win.waitForSelector('#modus-lernen [data-lernen="lauf"]');
+  await win.waitForSelector('.kk.empf [data-lernen^="kurs|"]');
   const zuerst = await S('(() => { const S = window.__lernhubTest.S; return S.rc.map((c) => c.key); })()');
-  await win.click('#modus-lernen [data-lernen="lauf"]');
+  const empfName = (await text('.kk.empf .kk-name b')).trim();
+  await win.click('.kk.empf [data-lernen^="kurs|"]');
   await win.waitForSelector('.lrn-frage.offen', { timeout: 30000 });
-  check(/nach Plan/.test(await text('.head')), '„Los“ startet die Lektion sofort, ohne Zwischenseite');
+  check(/Lektion/.test(await text('.head')) && !/nach Plan/.test(await text('.head')), 'Kachel „Lernen“ startet die Lektion dieses Kurses sofort, ohne Zwischenseite und ohne Lauf über alle Kurse');
   const lf = await text('#sidebar .side-open');
   check(/lernen/.test(lf), 'Seitenleiste „LÄUFT“: die offene Lektion (' + lf.trim() + ')');
   await bild('6-lernen');
   check(await fokusAus(win), 'Lernen startet im Fokus-Modus: Seitenleiste ausgeblendet, [data-fokus] holt sie zurück');
   await bild('6b-lernen-ohne-fokus');
   await win.click('.side-item[data-nav="woche"]');
-  await win.waitForSelector('#modus-lernen');
-  check(/Weiterlernen/.test(await text('#modus-lernen')) && /mittendrin/.test(await text('#modus-lernen')), 'zurück auf „Diese Woche“: Karte bietet „Weiterlernen“ an');
+  await win.waitForSelector('.kk.empf');
+  check((await text('.kk.empf .kk-name b')).trim() === empfName && /Weiterlernen/.test(await text('.kk.empf')) && /mittendrin/.test(await text('.kk.empf .kk-empf')) && (await win.$('.kk.empf .kk-modus.laeuft')) !== null, 'zurück auf „Diese Woche“: die Kurskarte bietet „Weiterlernen“ an, „Heute zuerst“, weil mittendrin');
   await bild('7-woche-laeuft');
   await win.click('#sidebar .side-open');
   await win.waitForSelector('.lrn-frage.offen');

@@ -1,18 +1,22 @@
 // Lernen: die nächste Lektion der Roadmap im Gespräch lernen (Lehrmodus der LearnHarness-App, Kompakt-Fassung).
-//   - Einstieg: Karte „Lernen“ auf „Diese Woche“ (Lernhub wählt Kurs und Lektion nach dem Plan, karte/reihenfolge)
-//     und auf jeder Kursseite (kursKarte). Ein Klick startet sofort (los).
+//   - Einstieg: Kurskarten auf „Diese Woche“ (ansichten.js, je Kurs eine Kachel „Lernen“) und die Karte auf jeder
+//     Kursseite (kursKarte). Ein Klick startet sofort (los). ⌘L lernt über alle Kurse nach dem Plan (laufLos).
 //   - Verlauf: Claudes Unterricht, Fragekarte (Auswahl oder frei, Prüffrage oder Vorhersage), deine Gedanken,
 //     am Ende die Rückschau mit „Lektion abschließen“.
 //   - Unten das Feld: Sicherheit, „Deine Gedanken“ (oder eine Rückfrage), ↵ sendet. Auswahl per Klick oder 1–4.
 //   - Rechts: der Plan dieser Lektion mit Lektionsuhr und die Roadmap des Kurses.
 //   - Diktieren: Mikrofon im Feld oder ⌘⇧L (Deepgram, Kanal diktat:* wie in der Übungsansicht).
+//   - Unendlich-Modus (⌘⇧U, „∞ Unendlich“, docs/unendlich.md): Lektion für Lektion ohne Pause. Die nächste Lektion
+//     wird vorbereitet, solange die aktuelle läuft, eingetragen wird ohne Knopf, an jeder Grenze kommen bis zu zwei
+//     früher falsch beantwortete Fragen zurück (Comeback-Fragen). Ist kein Stoff mehr da, geht es ins Wiederholen.
 // Die Sitzung läuft im Hauptprozess (src/main/lernen.js, claude -p); hier nur Anzeige und Eingaben.
 import { esc, ico, cc, n_, $, pd, fDM, addDays, isoWeek, flamme } from './util.js';
 import { S } from './state.js';
-import { md } from './ueben.js';
+import { md, laufStart } from './ueben.js';
 import * as A from './aufnahme.js';
 import * as Sp from './spiel.js';
-import { ton } from './effekte.js';
+import { ton, konfetti, ruhig } from './effekte.js';
+import { xpLektion } from './regeln.js';
 
 const L = window.lernhub;
 let hooks = { toast: () => {}, zeichnen: () => {}, nav: () => {}, geaendert: () => {} };
@@ -40,14 +44,36 @@ const offeneFrage = (s) => (s ? [...s.verlauf].reverse().find((v) => v.art === '
 const BUCHSTABE = (i) => String.fromCharCode(65 + i);
 const PAUSE_MAX = 10 * 60000;
 
+// Lektionsuhr wie im Hauptprozess (src/main/lernen.js lektionMs): Zeit zwischen den Zügen, je Lücke höchstens
+// 10 Min.; Zeit, in der die Lektion nicht offen war (s.weg, s.wegSeit), zählt nicht; s.korrekturMs von Hand gestellt.
+function lektionMs(s, bis = Date.now()) {
+  const ende = s.ende || bis;
+  const zeiten = [s.start, ...s.verlauf.map((v) => v.t).filter(Boolean)];
+  if (!s.ende) zeiten.push(bis);
+  const weg = [...(s.weg || []), ...(s.wegSeit ? [[s.wegSeit, ende]] : [])];
+  let ms = 0;
+  for (let i = 1; i < zeiten.length; i++) {
+    const a = zeiten[i - 1], b = zeiten[i];
+    let d = Math.max(0, b - a);
+    for (const [x, y] of weg) d -= Math.max(0, Math.min(b, y) - Math.max(a, x));
+    ms += Math.min(PAUSE_MAX, Math.max(0, d));
+  }
+  return Math.max(0, ms + (s.korrekturMs || 0));
+}
 function minuten(s) {
   if (s.ergebnis) return s.ergebnis.min;
-  const zeiten = [s.start, ...s.verlauf.map((v) => v.t).filter(Boolean)];
-  if (!s.ende) zeiten.push(Date.now());
-  let ms = 0;
-  for (let i = 1; i < zeiten.length; i++) ms += Math.min(PAUSE_MAX, Math.max(0, zeiten[i] - zeiten[i - 1]));
-  return Math.max(0, Math.round(ms / 60000));
+  return Math.round(lektionMs(s) / 60000);
 }
+// Die Uhr läuft nur, solange die Lektion zu sehen ist: Ansicht „Lernen“ des Kurses offen, Fenster nicht versteckt
+async function uhrMelden(c, offen) {
+  const e = c && eintrag(c);
+  if (!e || !e.sitzung || e.sitzung.ende) return;
+  try { const s = await L.lernenUhr(c.key, offen); if (s && S.lern[c.key]) S.lern[c.key].sitzung = s; } catch { }
+}
+document.addEventListener('visibilitychange', () => {
+  const c = S.route.name === 'lernen' ? S.bySlug[S.route.slug] : null;
+  if (c) uhrMelden(c, !document.hidden);
+});
 function statText(s) {
   const st = s.stat || {};
   if (!st.fragen) return '';
@@ -72,13 +98,13 @@ export function reihenfolge() {
   return S.rc.map((c, i) => {
     const d = dran(c);
     if (!d) return null;
-    const heute = bloecke.findIndex((e) => e.course === c.key && e.lessons.includes(d.id));
+    const heute = bloecke.findIndex((e) => e.course === c.key);       // Lernblock des Kurses heute (ohne Lektionen)
     const rest = Math.max(0, (c.quota || 0) - (c.doneThis || 0) - (gebucht(c) ? 1 : 0));
     const rang = d.sitzung ? 0 : heute >= 0 ? 1 : rest > 0 ? 2 : 3;
     return { c, d, rang, heute, rest, i, block: heute >= 0 ? bloecke[heute] : null };
   }).filter(Boolean).sort((a, b) => a.rang - b.rang || a.heute - b.heute || b.rest - a.rest || (b.c.alarm ? 1 : 0) - (a.c.alarm ? 1 : 0) || a.i - b.i);
 }
-function warum(x) {
+export function warum(x) {
   if (x.rang === 0) return 'weil du dort mittendrin bist';
   if (x.rang === 1) return `weil heute ab ${x.block.start} Uhr der Lernblock im Kalender steht`;
   if (x.rang === 2) return `weil dort diese Woche noch ${n_(x.rest, 'Lektion', 'Lektionen')} offen ${x.rest === 1 ? 'ist' : 'sind'}`;
@@ -90,32 +116,9 @@ function standText(s) {
   t.push(`${minuten(s)} von ${s.budget} Min.`);
   return t.join(' · ');
 }
-const zielMeta = (d) => [`ca. ${d.budget} Min.`, d.chapter ? 'Kap. ' + d.chapter : '', d.sources || '', d.training ? 'Klausurtraining' : ''].filter(Boolean).join(' · ');
 
-// Karte „Lernen“ auf „Diese Woche“: ein Klick lernt die Lektion, die nach dem Plan dran ist.
-export function karte() {
-  const r = reihenfolge();
-  const chips = S.rc.map((c) => {
-    const d = dran(c);
-    return d ? `<button class="chip kurs-chip" style="${cc(c)}" data-lernen="kurs|${esc(c.key)}" title="${esc(`${c.name}: ${d.id} ${d.title}${d.sitzung ? ' · läuft' : ''}`)}"><span class="dot"></span>${esc(c.short)}${d.sitzung ? ' · läuft' : ''}</button>`
-      : `<span class="chip kurs-chip aus" style="${cc(c)}" title="${esc(`${c.name}: ${grund(c) || 'nichts zu lernen'}`)}"><span class="dot"></span>${esc(c.short)}</span>`;
-  }).join('');
-  const kopf = `<h3>${ico('grad')}Lernen<span class="sp"></span><span class="muted mini">neuer Stoff im Gespräch</span></h3>`;
-  if (!r.length) {
-    return `<div class="card modus" id="modus-lernen" style="--cc:var(--accent)">${kopf}
-      <div class="modus-t">Gerade nichts zu lernen</div>
-      <p class="modus-m">${S.rc.map((c) => `${esc(c.short)}: ${esc(grund(c) || 'alle Lektionen erledigt')}`).join(' · ')}</p>
-      <div class="lauf-in"><div class="lauf-kurse">${chips}</div></div></div>`;
-  }
-  const x = r[0], d = x.d;
-  return `<div class="card modus" id="modus-lernen" style="${cc(x.c)}">${kopf}
-    <div class="modus-k"><span class="dot"></span>${esc(x.c.name)}${x.rang === 3 ? ' · vorlernen' : ''}</div>
-    <div class="modus-t">${esc(d.id)} · ${esc(d.title)}</div>
-    <div class="modus-m" title="${esc(d.sources || '')}">${esc(d.sitzung ? standText(d.sitzung) : zielMeta(d))}</div>
-    <div class="lauf-in"><div class="lauf-kurse">${chips}</div><span class="sp"></span>
-      <button class="btn los haupt" data-lernen="lauf">${ico('play')}${d.sitzung ? 'Weiterlernen' : 'Los'}</button></div>
-    <p class="muted mini">Start mit ${esc(x.c.short)}, ${esc(warum(x))}. Nach jeder Lektion schlägt Lernhub die nächste vor. Ein Klick auf einen Kurs lernt dort.</p></div>`;
-}
+// Für die Kurskarten auf „Diese Woche“ (ansichten.js): Stand einer laufenden Sitzung als Text und Anteil
+export const sitzungStand = (s) => ({ text: standText(s), anteil: Math.min(1, minuten(s) / s.budget) });
 
 // Karte „Lernen“ auf der Kursseite
 export function kursKarte(c) {
@@ -127,19 +130,23 @@ export function kursKarte(c) {
     <div class="modus-t">${esc(d.id)} · ${esc(d.title)}</div>
     <div class="modus-m" title="${esc(d.sources || '')}">${esc(s ? standText(s) : [d.chapter ? 'Kap. ' + d.chapter : '', d.sources || '', d.training ? 'Klausurtraining' : ''].filter(Boolean).join(' · ') || 'nächste Lektion der Roadmap')}</div>
     ${s ? `<div class="lrn-uhr"><span class="bar"><i style="width:${Math.min(100, Math.round(minuten(s) / s.budget * 100))}%"></i></span></div>` : ''}
-    <div class="acts"><button class="btn los haupt" data-lernen="kurs|${esc(c.key)}">${ico('play')}${s ? 'Weiterlernen' : 'Lernen starten'}</button></div></div>`;
+    <div class="acts"><button class="btn los haupt" data-lernen="kurs|${esc(c.key)}">${ico('play')}${s ? 'Weiterlernen' : 'Lernen starten'}</button>
+      <button class="btn strom-los" data-lernen="unendlich|${esc(c.key)}" title="Unendlich-Modus: Lektion für Lektion ohne Pause, danach Wiederholen (⌘⇧U)"><span class="strom-zeichen">∞</span>Unendlich</button></div></div>`;
 }
 
 // Ein Klick lernt: zur Ansicht wechseln, eine laufende Sitzung fortsetzen, sonst die nächste Lektion starten.
-export async function los(c, { lauf = false } = {}) {
+export async function los(c, { lauf = false, unendlich = false } = {}) {
+  // Eine einzelne Lektion außerhalb des Stroms beendet den Unendlich-Modus (eine Lektion aus dem Strom nicht)
+  if (!unendlich && S.strom && !(aktiv(c) && aktiv(c).unendlich)) stromBeenden();
+  unendlich = unendlich || !!S.strom;
   hooks.nav({ name: 'lernen', slug: c.slug, lauf });
   await laden(c);
   if (sitzung(c) && !aktiv(c)) { await L.lernenBeenden(c.key); await laden(c); }      // eingetragene Sitzung schließen
   if (!aktiv(c) && ziel(c).id) {
     leeren(c); delete gesehen[c.key];
-    const r = await L.lernenStarten(c.key);
+    const r = await L.lernenStarten(c.key, unendlich ? { unendlich: true } : undefined);
     if (r && !r.ok && r.text) hooks.toast(r.text, 'fehler');
-  }
+  } else if (aktiv(c) && !!aktiv(c).unendlich !== unendlich) await L.lernenStarten(c.key, { unendlich, fortsetzen: true });   // Modus wechseln, Lektion läuft weiter
   hooks.zeichnen();
 }
 export function laufLos() {
@@ -152,6 +159,228 @@ function danach(c) {
   if (S.lernLauf) return reihenfolge()[0] || null;
   const d = dran(c);
   return d ? { c, d } : null;
+}
+
+// ---------------------------------------------------------------- Unendlich-Modus
+// S.strom = { tag, start, xp0, kursFest, abschnitte: [{ sid, kurs, id, title, score, min, datei, gelernt, offen, xp }],
+//   falsch: [{ key, kurs, t, frage, optionen, richtig, erklaerung, wieder }], vorabFuer: [Sitzungs-IDs], naechst,
+//   zwischen: Comeback-Runde oder null, vorher: [{ sid, html }] }. Liegt in localStorage („strom“, ohne zwischen und
+//   vorher) und gilt bis Mitternacht. Für den Lernenden gibt es keine Lektionsgrenzen: Der Verlauf der Lektionen davor
+//   steht eingefroren über der laufenden, Comeback-Fragen stehen mitten im Verlauf, eingetragen wird im Hintergrund.
+const COMEBACK_MS = () => (S.info && S.info.test ? 0 : 8 * 60000);      // frühestens so lange nach der Falschantwort
+const COMEBACK_JE_GRENZE = 2;
+const heute = () => new Date().toDateString();
+function stromSpeichern() { try { localStorage.setItem('strom', JSON.stringify(S.strom ? { ...S.strom, zwischen: null, vorher: [] } : null)); } catch { } }
+(function stromLaden() { try { const x = JSON.parse(localStorage.getItem('strom') || 'null'); if (x && x.tag === heute()) S.strom = { ...x, vorher: [], weiterFuer: x.weiterFuer || [] }; } catch { } })();
+function stromNeu(kursFest = null) {
+  S.strom = { tag: heute(), start: Date.now(), xp0: Sp.gesamtXp(), kursFest, abschnitte: [], falsch: [], vorabFuer: [], weiterFuer: [], naechst: null, zwischen: null, vorher: [] };
+  stromSpeichern();
+}
+export function stromBeenden() { S.strom = null; stromSpeichern(); }
+
+// Lektionen am Stück in diesem Kurs am Ende des Stroms, die laufende mitgezählt
+function imKurs(c) {
+  let n = aktiv(c) ? 1 : 0;
+  for (let i = S.strom.abschnitte.length - 1; i >= 0 && S.strom.abschnitte[i].kurs === c.key; i--) n++;
+  return n;
+}
+// Offenes Wochenpensum, die laufende und die im Strom geschafften, aber noch nicht geladenen Lektionen abgezogen
+const unterwegs = (c) => S.strom.abschnitte.filter((a) => a.kurs === c.key && !a.zurueck && !(c.byId[a.id] || {}).done).length;
+const restNach = (c) => Math.max(0, (c.quota || 0) - (c.doneThis || 0) - unterwegs(c) - (aktiv(c) ? 1 : 0));
+// Im Kurs bleiben, solange dort Wochenpensum offen ist, sonst höchstens 3 Lektionen am Stück (Vorlernen)
+const bleiben = (c) => S.strom.kursFest === c.key || restNach(c) > 0 || imKurs(c) < 3;
+function kandidaten(c) {
+  const andere = reihenfolge().map((x) => x.c).filter((k) => k !== c);
+  return bleiben(c) ? [c, ...andere] : [...andere, c];
+}
+// Beim letzten Schritt des Plans: die nächste Lektion im Hintergrund vorbereiten (erster Zug läuft schon). Keine Uhr:
+// Im Strom geht es nach Thema weiter, nicht nach Zeit.
+const spaet = (s) => !!s.abschluss || (s.plan && s.plan.length > 0 && s.schritt >= s.plan.length);
+async function vorausdenken(c, s) {
+  const st = S.strom;
+  if (!st || st.vorabFuer.includes(s.id)) return;
+  st.vorabFuer.push(s.id); stromSpeichern();
+  for (const k of kandidaten(c)) {
+    if (k !== c && aktiv(k)) { st.naechst = k.key; break; }             // dort läuft schon eine Lektion
+    const r = await L.lernenVorbereiten(k.key);
+    if (r && r.ok) { st.naechst = k.key; break; }
+  }
+  stromSpeichern();
+}
+function naechsteImStrom(c) {
+  const v = S.strom.naechst && S.byKey[S.strom.naechst];
+  if (v && dran(v)) return { c: v, d: dran(v) };
+  for (const k of kandidaten(c)) { const d = dran(k); if (d) return { c: k, d }; }
+  return null;
+}
+// Falsch beantwortete Auswahl-Prüffragen merken, sie kommen als Comeback-Fragen zurück
+function falschMerken(s) {
+  for (const q of s.verlauf) {
+    if (q.art !== 'frage' || q.rolle !== 'pruefung' || q.frei || !q.aufgedeckt || q.ersetzt || q.korrekt !== false || q.richtig == null) continue;
+    const key = `${s.id}:c${q.nr}`;
+    if (S.strom.falsch.some((f) => f.key === key)) continue;
+    S.strom.falsch.push({ key, kurs: s.kurs, t: Date.now(), frage: q.frage, optionen: q.optionen, richtig: q.richtig, erklaerung: q.erklaerung, wieder: false });
+    stromSpeichern();
+  }
+}
+function mischen(n) {
+  const a = Array.from({ length: n }, (_, i) => i);
+  for (let i = n - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  if (n > 1 && a.every((x, i) => x === i)) a.push(a.shift());              // nie dieselbe Reihenfolge wie vorhin
+  return a;
+}
+function comebackWahl() {
+  const jetzt = Date.now();
+  return S.strom.falsch.filter((f) => !f.wieder && jetzt - f.t >= COMEBACK_MS()).slice(0, COMEBACK_JE_GRENZE).map((f) => {
+    f.wieder = true;
+    const p = mischen(f.optionen.length);
+    return { key: f.key, kurs: f.kurs, frage: f.frage, erklaerung: f.erklaerung, optionen: p.map((i) => f.optionen[i]), richtig: p.indexOf(f.richtig) };
+  });
+}
+function abschnittMerken(s) {
+  const st = S.strom;
+  let x = st.abschnitte.find((a) => a.sid === s.id);
+  if (!x) { x = { sid: s.id, kurs: s.kurs, id: s.lektion.id, title: s.lektion.title }; st.abschnitte.push(x); }
+  const e = s.ergebnis || {}, a = s.abschluss || {};
+  Object.assign(x, { score: e.score != null ? e.score : s.score, min: e.min || s.min, datei: e.datei, gelernt: a.gelernt || [], offen: a.offen || [],
+    xp: (s.zustand === 'erledigt' ? xpLektion(e.score) : 0) + Sp.sitzungXp(s.id), erledigt: s.zustand === 'erledigt', fehler: s.zustand === 'erledigt' ? null : s.eintragFehler || null });
+  stromSpeichern();
+  return x;
+}
+// Den Verlauf einer fertigen Lektion einfrieren: Er bleibt über der nächsten stehen, ohne Knöpfe und Marker
+function einfrieren(c, s) {
+  const st = S.strom;
+  if (st.vorher.some((v) => v.sid === s.id)) return;
+  const t = document.createElement('template');
+  t.innerHTML = s.verlauf.map((x) => zeile(c, s, x)).join('');
+  for (const el of t.content.querySelectorAll('*')) {
+    for (const a of [...el.attributes]) if (a.name.startsWith('data-') || a.name === 'id') el.removeAttribute(a.name);
+    el.classList.remove('offen', 'puls', 'wackeln');
+    if (el.matches('button, input, textarea')) el.disabled = true;
+  }
+  st.vorher.push({ sid: s.id, html: t.innerHTML });
+  if (st.vorher.length > 3) st.vorher.shift();                              // das DOM bleibt klein
+}
+const stromMin = (s) => Math.max(0, Math.round((Date.now() - S.strom.start) / 60000));
+
+// Nach dem Eintragen: nächste Lektion (eine vorbereitete wird übernommen), vorher die fälligen Comeback-Fragen
+async function stromWeiter(c) {
+  const st = S.strom;
+  if (!st || stromWeiter.laeuft || st.zwischen) return;
+  stromWeiter.laeuft = true;
+  try {
+    const n = naechsteImStrom(c);
+    st.naechst = null; stromSpeichern();
+    if (!n) {
+      hooks.toast('Neuer Stoff ist für heute durch. Ab hier wiederholst du, alle Kurse gemischt.', 'spiel', 'refresh');
+      stromBeenden();
+      await laufStart();
+      return;
+    }
+    const fragen = comebackWahl();
+    stromSpeichern();
+    if (fragen.length) {
+      L.lernenStarten(n.c.key, { unendlich: true });                    // läuft an, während du die Fragen beantwortest
+      st.zwischen = { fragen, i: 0, wahl: null, auf: false, ok: false, xp: 0, n: n.c.key };
+      hooks.zeichnen();
+      return;
+    }
+    await los(n.c, { unendlich: true });
+  } finally { stromWeiter.laeuft = false; }
+}
+
+export function unendlichLos(c = null) {
+  stromNeu(c && dran(c) ? c.key : null);
+  const erst = c && dran(c) ? c : (reihenfolge()[0] || {}).c;
+  if (!erst) {
+    hooks.toast('Gerade gibt es keine neue Lektion. Ab hier wiederholst du.', 'spiel', 'refresh');
+    stromBeenden();
+    return laufStart();
+  }
+  return los(erst, { unendlich: true });
+}
+
+const stromChip = (s) => `<span class="chip acc strom-chip" title="Unendlich-Modus: ein Gespräch, Thema für Thema, ohne Uhr">∞ <span class="num" data-strom-min>${stromMin(s)}</span> Min.</span>`;
+
+// Comeback-Frage mitten im Verlauf: von der App bewertet, ohne Wartezeit
+function comebackKarte() {
+  const z = S.strom.zwischen, q = z.fragen[z.i];
+  const opts = q.optionen.map((o, i) => {
+    const kl = ['lrn-opt'];
+    if (z.wahl === i) kl.push('gew');
+    if (z.auf && q.richtig === i) kl.push('richtig');
+    if (z.auf && z.wahl === i && q.richtig !== i) kl.push('falsch');
+    if (z.auf && z.wahl === i && !ruhig()) kl.push(z.ok ? 'puls' : 'wackeln');
+    const inhalt = `<span class="lrn-b">${BUCHSTABE(i)}</span><span class="ueb-prose sel">${md(o)}</span>`;
+    return z.auf ? `<div class="${kl.join(' ')}">${inhalt}</div>` : `<button class="${kl.join(' ')}" data-cb-opt="${i}" title="Taste ${i + 1}">${inhalt}</button>`;
+  }).join('');
+  const chip = z.auf ? `<span class="chip ${z.ok ? 'ok' : 'bad'}">${z.ok ? 'Richtig' : 'Falsch'}</span>${z.xp ? `<span class="chip xp">${ico('star')}+${z.xp} XP</span>` : ''}` : '<span class="chip">kam vorhin falsch</span>';
+  const erkl = z.auf && q.erklaerung ? `<div class="ueb-trenner"></div><div class="ueb-eyebrow">Erklärung</div><div class="ueb-prose sel">${md(q.erklaerung)}</div>` : '';
+  return `<div class="ueb-karte lrn-frage strom-cb${z.auf ? '' : ' offen'}"><div class="ueb-eyebrow">Frage von vorhin ${chip}</div>
+      <div class="ueb-prose ueb-gross sel">${md(q.frage)}</div><div class="lrn-opts">${opts}</div>${erkl}</div>
+    <div class="acts strom-cb-acts">${z.auf ? `<button class="btn los haupt" data-cb="weiter">Weiter →</button><span class="muted klein">↵</span>`
+    : `<button class="btn los haupt" data-cb="pruefen" ${z.wahl == null ? 'disabled' : ''}>Antworten</button><button class="btn sm ghost" data-cb="ueberspringen">Überspringen</button><span class="muted klein">1–${q.optionen.length} wählt · ↵ antwortet</span>`}</div>`;
+}
+function cbWaehlen(i) {
+  const z = S.strom && S.strom.zwischen;
+  if (!z || z.auf || i < 0 || i >= z.fragen[z.i].optionen.length) return;
+  z.wahl = z.wahl === i ? null : i; hooks.zeichnen();
+}
+function cbPruefen() {
+  const z = S.strom && S.strom.zwischen;
+  if (!z || z.auf || z.wahl == null) return;
+  const q = z.fragen[z.i];
+  z.auf = true; z.ok = z.wahl === q.richtig;
+  const b = Sp.comeback(q.key, z.ok, q.kurs);
+  z.xp = b ? b.xp : 0;
+  ton[z.ok ? 'richtig' : 'falsch']();
+  hooks.zeichnen();
+}
+async function cbWeiter() {
+  const z = S.strom && S.strom.zwischen;
+  if (!z) return;
+  if (z.i + 1 < z.fragen.length) { z.i++; z.wahl = null; z.auf = false; z.ok = false; z.xp = 0; hooks.zeichnen(); return; }
+  S.strom.zwischen = null;
+  const n = S.byKey[z.n];
+  if (n) await los(n, { unendlich: true }); else hooks.zeichnen();
+}
+
+// „Schluss für heute“: Rückblick über den ganzen Strom. Eine halbe Lektion bleibt offen und läuft später weiter.
+function stromRueckblick() {
+  const st = S.strom; if (!st) return;
+  const c = aktuell(), s = c ? aktiv(c) : null;
+  const fertig = st.abschnitte.filter((a) => !a.zurueck);
+  const mit = fertig.filter((a) => a.score != null);
+  const genau = mit.length ? Math.round(mit.reduce((x, a) => x + a.score, 0) / mit.length) : null;
+  const xp = Math.max(0, Sp.gesamtXp() - st.xp0), min = stromMin(s);
+  const el = document.createElement('div');
+  el.className = 'feier strom-ende';
+  el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'Rückblick');
+  el.innerHTML = `<div class="feier-karte"${c ? ` style="${cc(c)}"` : ''}><div class="feier-flamme">${flamme(fertig.length ? 'jubelnd' : 'froh', 78)}</div>
+    <h2 class="feier-t">${fertig.length >= 3 ? 'Starker Lauf!' : fertig.length ? 'Gut gelernt!' : 'Schluss für heute'}</h2>
+    <p class="muted feier-l">∞ Unendlich · seit ${new Date(st.start).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} Uhr</p>
+    <div class="feier-zahlen vier"><div><b class="num">${fertig.length}</b><span>${fertig.length === 1 ? 'Thema' : 'Themen'}</span></div>
+      <div><b class="num">${genau != null ? genau + ' %' : '–'}</b><span>Ø Genauigkeit</span></div>
+      <div><b class="num">${min} Min.</b><span>Zeit</span></div><div class="gold"><b class="num">+${xp}</b><span>XP</span></div></div>
+    ${fertig.length ? `<div class="strom-ende-liste">${fertig.map((a) => `<span>${a.erledigt ? ico('check') : ico('alert')}${esc(a.id)} ${esc(a.title)}${a.score != null ? ` <span class="muted num">${a.score} %</span>` : ''}<span class="sp"></span>
+      ${a.erledigt ? `${a.datei ? `<button class="btn sm ghost" data-strom-merkblatt="${st.abschnitte.indexOf(a)}">${ico('book')}Merkblatt</button><button class="btn sm ghost" data-strom-zurueck="${st.abschnitte.indexOf(a)}">${ico('undo')}Rückgängig</button>` : ''}`
+      : `<span class="muted klein">${a.fehler ? 'nicht eingetragen' : 'wird eingetragen …'}</span>${a.fehler ? `<button class="btn sm" data-strom-nachtragen="${esc(a.sid)}">Nochmal</button>` : ''}`}</span>`).join('')}</div>` : ''}
+    <p class="muted" style="margin-top:12px">${s ? `${esc(s.lektion.id)} bleibt offen. Beim nächsten Mal geht es genau dort weiter.` : 'Alles eingetragen.'}</p>
+    <div class="feier-acts"><button class="btn" data-strom-ende="weiter">Doch weiterlernen</button><button class="btn los haupt" data-strom-ende="fertig">Fertig für heute</button></div></div>`;
+  document.body.appendChild(el);
+  const zu = (fertigJetzt) => {
+    document.removeEventListener('keydown', tasten, true); el.remove();
+    if (!fertigJetzt) return;
+    stromBeenden(); verlassen(); hooks.nav({ name: 'woche' });
+  };
+  const tasten = (ev) => {
+    if (ev.key === 'Escape') { ev.preventDefault(); ev.stopImmediatePropagation(); zu(false); }
+    else if (ev.key === 'Enter' && !ev.isComposing) { ev.preventDefault(); ev.stopImmediatePropagation(); zu(true); }
+  };
+  document.addEventListener('keydown', tasten, true);
+  el.addEventListener('click', (ev) => { const b = ev.target.closest('[data-strom-ende]'); if (b) { ev.stopPropagation(); zu(b.dataset.stromEnde === 'fertig'); } });
+  el.querySelector('[data-strom-ende="fertig"]').focus({ preventScroll: true });
+  if (fertig.length) { ton.geschafft(); if (!ruhig()) konfetti({ menge: 120 }); }
 }
 
 // ---------------------------------------------------------------- Verlauf
@@ -196,6 +425,7 @@ function frageKarte(c, s, q) {
 
 function rueckschau(c, s) {
   const a = s.abschluss || {};
+  if (s.unendlich && S.strom && !s.eintragFehler) return a.text ? `<div class="ueb-claude ueb-prose lrn-text sel">${md(a.text)}</div>` : '';
   const liste = (titel, xs) => (xs && xs.length ? `<div class="ueb-eyebrow" style="margin-top:12px">${titel}</div><ul class="ueb-liste ueb-prose">${xs.map((x) => `<li>${md(x).replace(/^<p>|<\/p>$/g, '')}</li>`).join('')}</ul>` : '');
   const zahlen = [statText(s), s.score != null ? `${s.score} %` : '', `${minuten(s)} Min.`].filter(Boolean).join(' · ');
   let unten = '';
@@ -226,7 +456,7 @@ function zeile(c, s, e) {
 }
 
 function denktZeile(s) {
-  const was = !s.verlauf.length ? 'liest das Material und plant die Lektion' : 'denkt';
+  const was = !s.verlauf.length && !S.strom ? 'liest das Material und plant die Lektion' : 'denkt';
   return Sp.warten(s, { art: 'lernen', was, sek: 'data-lrn-sek' });
 }
 
@@ -235,6 +465,7 @@ function fokusLeiste(c, s) {
   if (!Sp.fokusAn() || !s) return '';
   const n = s.plan && s.plan.length ? s.plan.length : 0, m = minuten(s);
   const seg = n ? s.plan.map((t, i) => `<i class="${i + 1 < s.schritt ? 'done' : i + 1 === s.schritt ? 'jetzt' : ''}" title="${esc(`${i + 1}. ${t}`)}"></i>`).join('') : '<i class="leer"></i>';
+  if (S.strom) return `<div class="fokus-leiste" style="${cc(c)}"><div class="fokus-seg"><i class="leer"></i></div><span class="muted num fokus-uhr" data-strom-min>${stromMin(s)}</span><span class="muted fokus-uhr">&nbsp;Min.</span></div>`;
   return `<div class="fokus-leiste" style="${cc(c)}"><div class="fokus-seg">${seg}</div><span class="muted num fokus-uhr" data-lrn-uhr2>${m} / ${s.budget} Min.</span></div>`;
 }
 
@@ -245,10 +476,10 @@ function planBox(c, s) {
     const n = i + 1, kl = n < s.schritt ? 'done' : n === s.schritt ? 'jetzt' : '';
     return `<li class="${kl}"><span class="lrn-pn">${n < s.schritt ? ico('check') : n}</span><span>${esc(t)}</span></li>`;
   }).join('')}</ol>` : '<p class="muted klein">Der Plan kommt mit Claudes erster Nachricht.</p>';
-  return `<div class="lrn-box"><div class="ueb-eyebrow">Diese Lektion</div>
-    <b class="lrn-titel">${esc(l.id)} · ${esc(l.title)}</b>
+  return `<div class="lrn-box"><div class="ueb-eyebrow">${S.strom ? 'Gerade dran' : 'Diese Lektion'}</div>
+    <b class="lrn-titel">${S.strom ? '' : esc(l.id) + ' · '}${esc(l.title)}</b>
     <div class="muted klein lrn-quellen" title="${esc(l.sources || '')}">${[l.chapter ? 'Kap. ' + esc(l.chapter) : '', esc(l.sources || '')].filter(Boolean).join(' · ')}</div>
-    <div class="lrn-uhr${m >= s.budget ? ' voll' : ''}" title="Aktive Lernzeit, Pausen über 10 Min. zählen als 10"><span class="bar"><i style="width:${p}%"></i></span><span class="num" data-lrn-uhr>${m} / ${s.budget} Min.</span></div>
+    ${S.strom ? '' : `<div class="lrn-uhr${m >= s.budget ? ' voll' : ''}" title="Aktive Lernzeit, Pausen über 10 Min. zählen als 10"><span class="bar"><i style="width:${p}%"></i></span><span class="num" data-lrn-uhr>${m} / ${s.budget} Min.</span></div>`}
     ${plan}${statText(s) ? `<div class="muted klein" style="margin-top:8px">${esc(statText(s))}${s.score != null ? ` · ${s.score} %` : ''}</div>` : ''}</div>`;
 }
 
@@ -275,22 +506,30 @@ function roadmapBox(c, jetztId) {
 
 // ---------------------------------------------------------------- Ansicht
 export function ansicht(c) {
-  const s = sitzung(c), z = ziel(c);
+  const st = S.strom;
+  const s0 = sitzung(c), z = ziel(c);
+  // Im Strom: Was schon eingefroren über der Ansicht steht oder hinter einer Comeback-Frage wartet, zeigt sich nicht doppelt
+  const s = st && s0 && (st.zwischen || st.vorher.some((v) => v.sid === s0.id)) ? null : s0;
   const offen = s && s.zustand !== 'erledigt' && s.zustand !== 'traegtEin';
-  const kopf = `<header class="head drag"><span class="crumb"><span class="nodrag" style="${cc(c)}"><span class="dot" style="display:inline-block;margin-right:7px"></span></span>${esc(c.name)} · Lernen</span>
-    ${s ? `<span class="chip acc">${ico('grad')}Lektion ${esc(s.lektion.id)}</span>` : ''}${s && S.lernLauf ? '<span class="chip" title="Nach jeder Lektion schlägt Lernhub die nächste vor, nach dem Plan über alle Kurse">nach Plan</span>' : ''}
+  const kopf = `<header class="head drag"><span class="crumb"><span class="nodrag" style="${cc(c)}"><span class="dot" style="display:inline-block;margin-right:7px"></span></span>${esc(c.name)} · ${st ? 'Unendlich' : 'Lernen'}</span>
+    ${s && !st ? `<span class="chip acc">${ico('grad')}Lektion ${esc(s.lektion.id)}</span>` : ''}${st ? stromChip(s) : s && S.lernLauf ? '<span class="chip" title="Nach jeder Lektion schlägt Lernhub die nächste vor, nach dem Plan über alle Kurse">nach Plan</span>' : ''}
     ${s ? Sp.comboChip(Sp.comboLernen(s)) : ''}
     <span class="sp"></span>${Sp.fokusKnopf()}
-    ${offen && !s.abschluss && s.stat.gestellt ? `<button class="btn sm" data-lrn="ende" ${s.zustand === 'denkt' ? 'disabled' : ''} title="Claude fasst zusammen, danach kannst du die Lektion abschließen">${ico('flag')}Lektion beenden</button>` : ''}
+    ${offen && !st && !s.abschluss && s.stat.gestellt ? `<button class="btn sm" data-lrn="ende" ${s.zustand === 'denkt' ? 'disabled' : ''} title="Claude fasst zusammen, danach kannst du die Lektion abschließen">${ico('flag')}Lektion beenden</button>` : ''}
+    ${st ? `<button class="btn sm" data-lrn="schluss" title="Rückblick; was gerade halb ist, bleibt offen und läuft später weiter">${ico('flag')}Schluss für heute</button>` : ''}
     ${offen ? `<button class="btn sm ghost" data-lrn="verwerfen" title="Sitzung verwerfen, nichts wird eingetragen">${ico('x')}Abbrechen</button>` : ''}
     <button class="btn sm ghost" data-nav="kurs:${c.slug}">${ico('arrowLeft')}Zum Kurs</button></header>`;
   const seite = `<aside class="lrn-seite" style="${cc(c)}">${s ? planBox(c, s) : ''}${roadmapBox(c, s ? s.lektion.id : z.id)}</aside>`;
-  if (!s) return kopf + `<div class="lrn-layout"><div class="lrn-haupt"><div class="view">${start(c, z)}</div></div>${seite}</div>`;
+  if (!s && !st) return kopf + `<div class="lrn-layout"><div class="lrn-haupt"><div class="view">${start(c, z)}</div></div>${seite}</div>`;
+  // Im Strom ohne laufende Lektion: eine Comeback-Frage, sonst geht es gleich weiter
+  const luecke = !s && st ? (st.zwischen ? comebackKarte()
+    : stromWeiter.laeuft || s0 ? `<div class="ueb-denkt"><span class="ueb-punkte"><i></i><i></i><i></i></span></div>`
+      : `<div class="acts"><button class="btn los haupt" data-lrn="strom-weiter">Weiter →</button></div>`) : '';
   return kopf + fokusLeiste(c, s) + `<div class="lrn-layout"><div class="lrn-haupt"><div class="view ueb-view" id="lrn-view"><div class="ueb-wrap" style="${cc(c)}">
-    <div class="ueb-verlauf">${s.verlauf.map((x) => zeile(c, s, x)).join('')}
-    ${s.zustand === 'denkt' ? denktZeile(s) : ''}
-    ${s.zustand === 'fehler' ? `<div class="note"><span>${ico('alert')}</span><span>Claude hat nicht geantwortet: ${esc(s.fehler || '')}</span><span class="sp"></span><button class="btn sm" data-lrn="nochmal">${ico('refresh')}Nochmal versuchen</button></div>` : ''}
-    </div></div></div>${dock(c, s)}</div>${seite}</div>`;
+    <div class="ueb-verlauf">${st ? `<div class="strom-vorher">${st.vorher.map((v) => v.html).join('')}</div><div class="strom-naht"></div>` : ''}${s ? s.verlauf.map((x) => zeile(c, s, x)).join('') : luecke}
+    ${s && s.zustand === 'denkt' ? denktZeile(s) : ''}
+    ${s && s.zustand === 'fehler' ? `<div class="note"><span>${ico('alert')}</span><span>Claude hat nicht geantwortet: ${esc(s.fehler || '')}</span><span class="sp"></span><button class="btn sm" data-lrn="nochmal">${ico('refresh')}Nochmal versuchen</button></div>` : ''}
+    </div></div></div>${s ? dock(c, s) : ''}</div>${seite}</div>`;
 }
 
 function start(c, z) {
@@ -333,7 +572,8 @@ function dock(c, s) {
       <span class="muted klein">${fertig ? esc([e.score != null ? e.score + ' %' : '', e.min ? e.min + ' Min.' : ''].filter(Boolean).join(' · ')) : ''}</span><span class="sp"></span>
       ${fertig ? `<button class="btn sm ghost" data-lrn="zurueck" title="Abschluss zurücknehmen: Die Lektion ist wieder offen">${ico('undo')}Rückgängig</button>
       ${e.datei ? `<button class="btn sm ghost" data-lrn="ansehen" title="Merkblatt dieser Lektion im Browser öffnen">${ico('book')}Merkblatt</button>` : ''}
-      ${n ? `<button class="btn ueb-naechste haupt" data-lrn="naechste" title="${esc(`${n.d.id} ${n.d.title}`)}">Nächste Lektion${n.c.key !== c.key ? ' · ' + esc(n.c.short) : ''} →</button>`
+      ${S.strom ? `<button class="btn ueb-naechste haupt" data-lrn="strom-weiter">Weiter im Strom →</button>`
+    : n ? `<button class="btn ueb-naechste haupt" data-lrn="naechste" title="${esc(`${n.d.id} ${n.d.title}`)}">Nächste Lektion${n.c.key !== c.key ? ' · ' + esc(n.c.short) : ''} →</button>`
     : `<button class="btn sm" data-nav="woche">Zur Übersicht</button>`}` : ''}</div></div></div>`;
   }
   const q = offeneFrage(s);
@@ -401,6 +641,8 @@ export async function diktatAus() {
   if (S.route.name === 'lernen') hooks.zeichnen();
 }
 export function verlassen() { if (D.zustand !== 'aus' && D.zustand !== 'fehler') diktatAus(); clearInterval(uhr); }
+// Ansicht wechselt weg von dieser Lektion: Uhr anhalten (betreten startet sie wieder)
+export function weg() { uhrMelden(aktuell(), false); }
 L.on.diktatStatus((x) => {
   if (S.route.name !== 'lernen') return;
   if (x.zustand === 'aus' && D.zustand === 'fehler') return;
@@ -423,12 +665,19 @@ L.on.diktatText((x) => {
 export function verdrahten(c, { scrollAlt = null } = {}) {
   const s = sitzung(c);
   const v = $('#lrn-view');
-  if (v && s) {
+  const verdeckt = !!(S.strom && (S.strom.zwischen || (s && S.strom.vorher.some((x) => x.sid === s.id))));
+  if (v && S.strom && (!s || verdeckt)) {                    // Strom zwischen zwei Lektionen: zur Comeback-Frage
+    const naht = v.querySelector('.strom-naht');
+    if (naht && naht.nextElementSibling && verdrahten.luecke !== naht.nextElementSibling.className) { v.scrollTop = Math.max(0, naht.nextElementSibling.offsetTop - 12); verdrahten.luecke = naht.nextElementSibling.className; }
+  } else if (v && s) {
+    verdrahten.luecke = null;
     const n = s.verlauf.length, vorher = gesehen[c.key];
     gesehen[c.key] = n;
-    if (vorher == null || s.zustand === 'denkt') v.scrollTop = v.scrollHeight;
+    const naht = v.querySelector('.strom-naht');
+    if (vorher == null && naht && naht.nextElementSibling && S.strom.vorher.length) v.scrollTop = Math.max(0, naht.nextElementSibling.offsetTop - 12);
+    else if (vorher == null || s.zustand === 'denkt') v.scrollTop = v.scrollHeight;
     else if (n > vorher) {
-      const neu = v.querySelector('.ueb-verlauf').children[vorher];
+      const neu = v.querySelector('.ueb-verlauf').children[vorher + (naht ? 2 : 0)];
       if (neu) v.scrollTop = Math.max(0, neu.offsetTop - 12); else v.scrollTop = v.scrollHeight;
     } else if (scrollAlt != null) v.scrollTop = scrollAlt;
   }
@@ -450,6 +699,7 @@ export function verdrahten(c, { scrollAlt = null } = {}) {
       if (u) u.textContent = `${minuten(s)} / ${s.budget} Min.`;
       const u2 = document.querySelector('[data-lrn-uhr2]');
       if (u2) u2.textContent = `${minuten(s)} / ${s.budget} Min.`;
+      if (S.strom) document.querySelectorAll('[data-strom-min]').forEach((x) => { x.textContent = stromMin(s); });
       Sp.wartenTick();
     }, 1000);
   }
@@ -466,10 +716,13 @@ export async function ladenAlle() {
 }
 // Neu laden nur, wenn die Sitzung nicht läuft: Dann zählt, welche Lektion laut Roadmap dran ist
 export const brauchtLaden = (c) => { const e = eintrag(c); return !e || !e.sitzung || e.sitzung.zustand === 'erledigt'; };
-export function betreten() { verdrahten.roadmap = false; }
+export function betreten(slug) { verdrahten.roadmap = false; uhrMelden(S.bySlug[slug], !document.hidden); }
 export async function stand(s) {
   if (!s) return;
   const e = S.lern[s.kurs] || (S.lern[s.kurs] = { sitzung: null, ziel: {} });
+  if (s.vorab) { e.vorab = s.zustand === 'beendet' ? null : s; return; }         // vorbereitete nächste Lektion
+  if (s.hinten) return hintenStand(s, e);                                          // Strom: trägt sich im Hintergrund ein
+  if (e.vorab && e.vorab.id === s.id) e.vorab = null;                             // … ist jetzt die laufende
   const vorher = e.sitzung ? e.sitzung.zustand : null;
   const c = S.byKey[s.kurs];
   // live: dieselbe Sitzung war schon da, und ihre Ansicht ist offen
@@ -483,11 +736,48 @@ export async function stand(s) {
     const x = await L.lernenStand(c.key);
     if (x) S.lern[c.key] = x;
   }
+  // Unendlich-Modus: Falsches merken, rechtzeitig vorausdenken, nach dem Eintragen weiter im Strom
+  const strom = !!(S.strom && s.unendlich && c);
+  let geschafft = null;
+  if (strom && s.zustand !== 'beendet') {
+    falschMerken(s);
+    if (s.zustand !== 'erledigt' && s.zustand !== 'traegtEin' && spaet(s)) vorausdenken(c, s);
+    if (s.zustand === 'erledigt' && vorher !== 'erledigt') geschafft = abschnittMerken(s);   // eingetragen ohne Hintergrund (Ausnahme)
+  }
   if (c && S.route.name === 'lernen' && S.route.slug === c.slug) hooks.zeichnen();
   else if (vorher !== s.zustand) hooks.geaendert();          // Karten und Seitenleiste zeigen den Zustand
-  if (live && s.zustand === 'erledigt' && vorher !== 'erledigt' && S.route.name === 'lernen' && S.route.slug === c.slug) {
-    Sp.feier({ s, naechste: danach(c), beiNaechste: () => aktion('naechste') });
+  const hier = c && S.route.name === 'lernen' && S.route.slug === c.slug;
+  if (live && s.zustand === 'erledigt' && vorher !== 'erledigt' && hier) {
+    if (!strom) Sp.feier({ s, naechste: danach(c), beiNaechste: () => aktion('naechste') });
+    else if (geschafft) stromWeiter(c);
   }
+}
+// Strom: Die Lektion hat ihren abschluss und trägt sich im Hintergrund ein. Für den Lernenden geht das Gespräch
+// einfach weiter: Ihr Verlauf wird eingefroren, danach kommt gleich die nächste (vorher fällige Comeback-Fragen).
+async function hintenStand(s, e) {
+  const c = S.byKey[s.kurs];
+  const war = e.sitzung && e.sitzung.id === s.id;
+  const live = !!(c && war && S.route.name === 'lernen' && S.route.slug === c.slug);
+  const neu = Sp.lernen(s, live, { ohneLevel: s.zustand === 'erledigt' });
+  if (live) rueckmelden(s, neu.fragen);
+  if (war) { e.sitzung = null; delete gesehen[s.kurs]; }
+  if (!S.strom || !c) {
+    if (s.zustand === 'erledigt') { const x = await L.lernenStand(c.key); if (x) S.lern[c.key] = x; hooks.geaendert(); }
+    return;
+  }
+  falschMerken(s);
+  const a = abschnittMerken(s);
+  if (war) einfrieren(c, s);
+  if (s.zustand === 'bereit' && s.eintragFehler) hooks.toast(`${s.lektion.title}: nicht eingetragen (${s.eintragFehler}). Im Rückblick „Nochmal“.`, 'fehler');
+  if (s.zustand === 'erledigt') { const x = await L.lernenStand(c.key); if (x) S.lern[c.key] = { ...x, vorab: x.vorab || (S.lern[c.key] || {}).vorab }; hooks.geaendert(); }
+  if (!S.strom.weiterFuer.includes(s.id)) {
+    S.strom.weiterFuer.push(s.id); stromSpeichern();
+    const x = await L.lernenStand(c.key); if (x) S.lern[c.key] = x;               // ziel() kennt die Lektion schon als erledigt
+    const hier = S.route.name === 'lernen' && S.route.slug === c.slug;
+    if (hier) await stromWeiter(c);
+  }
+  if (S.route.name === 'lernen' && S.route.slug === c.slug) hooks.zeichnen(); else hooks.geaendert();
+  return a;
 }
 // Frisch aufgedeckte Fragen: Ton, Puls oder Wackeln, „+n XP“, eine Zeile Lob oder Trost
 function rueckmelden(s, fragen) {
@@ -532,6 +822,8 @@ async function aktion(was) {
   const ok = (r) => { if (r && !r.ok && r.text) hooks.toast(r.text, 'fehler'); return r && r.ok; };
   if (was === 'start') { leeren(c); delete gesehen[c.key]; ok(await L.lernenStarten(c.key)); return; }
   if (was === 'diktat') { diktatUmschalten(); return; }
+  if (was === 'schluss') { stromRueckblick(); return; }
+  if (was === 'strom-weiter') { stromWeiter(c); return; }
   if (!s) return;
   if (was === 'nochmal') { L.lernenNochmal(c.key); return; }
   if (was === 'verwerfen') {
@@ -597,11 +889,38 @@ document.addEventListener('click', (e) => {
   e.stopPropagation();
   const [was, key] = b.dataset.lernen.split('|');
   if (was === 'lauf') laufLos();
+  else if (was === 'unendlich') unendlichLos(key ? S.byKey[key] : null);
   else if (S.byKey[key]) los(S.byKey[key]);
 }, true);
 
 document.addEventListener('click', (e) => {
   const c = aktuell(); if (!c) return;
+  const cb = e.target.closest('[data-cb-opt]');
+  if (cb) { e.stopPropagation(); cbWaehlen(+cb.dataset.cbOpt); return; }
+  const ck = e.target.closest('[data-cb]');
+  if (ck && !ck.disabled) {
+    e.stopPropagation();
+    if (ck.dataset.cb === 'pruefen') cbPruefen(); else cbWeiter();
+    return;
+  }
+  const mb = e.target.closest('[data-strom-merkblatt]');
+  if (mb && S.strom) { e.stopPropagation(); const a = S.strom.abschnitte[+mb.dataset.stromMerkblatt]; if (a && a.datei) L.oeffnen(a.datei); return; }
+  const nt = e.target.closest('[data-strom-nachtragen]');
+  if (nt && S.strom) {
+    e.stopPropagation(); nt.disabled = true;
+    L.lernenNachtragen(nt.dataset.stromNachtragen).then((r) => { if (r && !r.ok && r.text) hooks.toast(r.text, 'fehler'); else hooks.toast('Eingetragen.'); });
+    return;
+  }
+  const zr = e.target.closest('[data-strom-zurueck]');
+  if (zr && S.strom) {
+    e.stopPropagation();
+    const a = S.strom.abschnitte[+zr.dataset.stromZurueck];
+    if (a && a.datei) fragen('Abschluss zurücknehmen?', `${a.id} ist danach wieder offen. Das Merkblatt bleibt bei den Lektionen liegen.`, 'Zurücknehmen', () => {
+      L.aktion('kurstutor://undone?lesson=' + encodeURIComponent(a.datei));
+      a.zurueck = true; stromSpeichern(); hooks.zeichnen();
+    });
+    return;
+  }
   const o = e.target.closest('[data-lrn-opt]');
   if (o) { e.stopPropagation(); waehlen(c, +o.dataset.lrnOpt); return; }
   const si = e.target.closest('[data-lrn-sicher]');
@@ -628,8 +947,15 @@ document.addEventListener('input', (e) => {
 
 document.addEventListener('keydown', (e) => {
   const c = aktuell(); if (!c) return;
-  const s = sitzung(c); if (!s) return;
   if (document.querySelector('.overlay, .feier')) return;
+  const z = S.strom && S.strom.zwischen;
+  if (z && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    const i = /^[1-9]$/.test(e.key) ? +e.key - 1 : /^[a-e]$/i.test(e.key) ? e.key.toLowerCase().charCodeAt(0) - 97 : -1;
+    if (i >= 0) { e.preventDefault(); cbWaehlen(i); return; }
+    if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); z.auf ? cbWeiter() : cbPruefen(); return; }
+    return;
+  }
+  const s = sitzung(c); if (!s) return;
   if (e.key === 'Escape' && (D.zustand === 'laeuft' || D.zustand === 'verbindet')) { e.preventDefault(); e.stopImmediatePropagation(); diktatAus(); return; }
   if (s.zustand === 'erledigt' || s.zustand === 'traegtEin') return;
   const imFeld = e.target && e.target.id === 'lrn-text';

@@ -25,7 +25,7 @@ Installiert: `~/Applications/Lernhub.app`. Neu bauen: `npm run app` (= `scripts/
 | Wiederholen | Übungsrunde über alle erledigten Lektionen, nach LearnHarness „Üben“ |
 | Profil | Level, Lerntage-Kalender, Abzeichen, Rekorde, Einstellungen fürs Spiel (siehe „Spiel“) |
 
-Tastenkürzel: ⌘L Lernen · ⌘⇧W Wiederholen · ⌘K Suchen · ⌘0 Woche · ⌘1–6 Kurse · ⌘⇧T Lerntag · ⌘⇧L Diktieren · ⌘⇧F Fokus-Modus · ⌘⇧S Plan & Kalender abgleichen · ⌘R neu laden · ⌘, Einstellungen.
+Tastenkürzel: ⌘L Lernen · ⌘⇧U Unendlich lernen · ⌘⇧W Wiederholen · ⌘K Suchen · ⌘0 Woche · ⌘1–6 Kurse · ⌘⇧T Lerntag · ⌘⇧L Diktieren · ⌘⇧F Fokus-Modus · ⌘⇧S Plan & Kalender abgleichen · ⌘R neu laden · ⌘, Einstellungen.
 
 Auf der Kursseite klappen frühere, ganz erledigte Wochen ein („Frühere Wochen“): Die Seite beginnt mit den beiden Karten und der laufenden Woche. Eine erledigte Lektion hat „Merkblatt“; die Datei öffnet sich im Browser.
 
@@ -45,6 +45,22 @@ Claude unterrichtet die nächste Lektion der Roadmap nach dem Lehrmodus der Lear
 - **Danach:** „Nächste Lektion →“ lernt gleich weiter: von „Diese Woche“ aus die nächste nach dem Plan (auch in einem anderen Kurs, der Knopf nennt ihn), von der Kursseite aus die nächste dieses Kurses. „Rückgängig“ nimmt den Abschluss zurück, „Merkblatt“ öffnet es im Browser, „Abbrechen“ verwirft die Sitzung, ohne etwas einzutragen.
 - **Code:** `src/main/lernen.js` (Sitzung, Schema, Systemprompt, Eintragen), `src/ui/js/lernen.js` (Karten, Reihenfolge, Ansicht). Claude darf nur lesen. Modell und Effort: `LERNHUB_LERNEN_MODELL`, `LERNHUB_LERNEN_EFFORT` (Standard opus, medium; 11–14 s je Zug). Sitzungen liegen in `userData/lernen/<id>.json` und laufen nach einem Neustart weiter.
 - **Test:** `node tests/lernen.test.mjs` (Claude-Attrappe `tests/lernen-attrappe.mjs`).
+
+## Unendlich lernen
+
+Ein einziges Gespräch, Thema für Thema, bis du aufhörst. Für dich gibt es keine Lektionen: keine Uhr, keine Rückschau, keine Grenze im Verlauf. Unter der Haube bleibt jede Roadmap-Lektion eine eigene Claude-Sitzung mit Merkblatt, Record und XP. Konzept: `docs/unendlich.md`.
+
+- **Einstieg:** „∞ Unendlich lernen“ über den Kursen auf „Diese Woche“ (nach dem Plan über alle Kurse), „∞ Unendlich“ auf der Karte „Lernen“ der Kursseite (erst dieser Kurs), ⌘⇧U, Suche.
+- **Nach Thema statt nach Zeit:** Im Strom hat Claude kein Budget und keine Lektionsuhr (`stromRegeln` im Systemprompt, `[Unendlich-Modus]` statt `[Lektionsuhr]` in jeder Nachricht). Ein Schritt je Gedanke, höchstens 12; weiter, sobald du den Schritt verstanden hast (richtig und nicht geraten, sonst bis zu zweimal nachfassen). Kein Thema fällt weg, um schneller fertig zu werden. Keine Schlussrunde, kein Fazit, kein Gruß, das Wort „Lektion“ fällt nicht.
+- **Vorausdenken:** Beim letzten Plan-Schritt startet Lernhub die nächste Lektion im Hintergrund (`Lernen.vorbereiten`, eigene Claude-Sitzung, Zustand `vorab`). Ihr Startauftrag nennt das Thema davor, damit ihr erster Zug einfach der nächste Schritt ist. Die Übernahme braucht keine Wartezeit.
+- **Eintragen im Hintergrund:** Der `abschluss` ist im Strom nur die Auflösung deiner letzten Antwort und steht als normale Nachricht im Verlauf. Der Hauptprozess nimmt die Lektion sofort von ihrem Platz (`hintenEintragen`) und trägt sie im Hintergrund ein (Merkblatt, `kurstutor://done`, Record); die nächste übernimmt gleichzeitig. Ein Fehler hält den Strom nicht an: Meldung, im Rückblick „Nochmal“ (`lernen:nachtragen`).
+- **Ein Verlauf:** Der Verlauf der Lektionen davor bleibt eingefroren darüber stehen (die letzten drei, ohne Knöpfe), darunter geht es weiter. Keine Trennlinie, keine Meilenstein-Karte, kein Konfetti.
+- **Übergabe:** Deine erste Antwort in der nächsten Lektion desselben Kurses trägt Ergebnis, Kernaussage und „Noch offen“ der vorigen.
+- **Comeback-Fragen:** Zwischen zwei Themen kommen bis zu zwei Auswahl-Prüffragen zurück, die du in diesem Strom falsch hattest (frühestens nach 8 Min., Optionen neu gemischt, jede einmal), als Fragekarte mitten im Verlauf. Die App bewertet sie selbst; sie bringen XP wie eine Prüffrage (`<Sitzung>:c<nr>` in `gebucht`), zählen aber nicht zum Score.
+- **Welcher Kurs:** im Kurs bleiben, solange dort Wochenpensum offen ist, sonst höchstens 3 Lektionen am Stück, dann nach `reihenfolge()`. Ist nirgends mehr neuer Stoff, geht es von selbst in den Endloslauf von Wiederholen.
+- **Wechsel zwischen den Modi:** Beide teilen sich dieselbe Sitzung je Kurs. „Weiterlernen“ macht eine halbe Strom-Lektion wieder zur normalen Lektion (Uhr, Rückschau, „Lektion abschließen“), „∞ Unendlich“ eine normale zur Strom-Lektion.
+- **Aufhören:** „Schluss für heute“ zeigt den Rückblick (Themen mit Merkblatt und Rückgängig, Ø Genauigkeit, Zeit, XP). Was gerade halb ist, bleibt offen und läuft später weiter. Den Strom hält `S.strom` (localStorage `strom`, gilt bis Mitternacht); eine einzelne Lektion außerhalb des Stroms beendet ihn.
+- **Test:** `node tests/unendlich.test.mjs` (Claude-Attrappe `tests/lernen-attrappe.mjs`).
 
 ## Wiederholen (Üben)
 
@@ -144,10 +160,11 @@ Alle Tests laufen auf einer Kopie des Semesters (nur Lernbereiche und Einstellun
 Welches Semester und welchen Kurs die Tests kopieren, steht in `tests/lokal.json` (nicht im Repo): `{ "root": "<Studienordner>", "semester": "<Ordner des Semesters>", "kurs": "<Kursordner>" }`, oder in `LERNHUB_TEST_ROOT`, `LERNHUB_TEST_SEMESTER`, `LERNHUB_TEST_KURS`. Ohne Angabe nehmen sie den Studienordner der Skill, das höchste Semester mit Roadmaps und den ersten Kurs mit mindestens fünf erledigten und zwei offenen Lektionen.
 
 ```bash
-npm test                         # alle fünf:
+npm test                         # alle:
 node tests/spiel.test.mjs        #   Spielregeln: XP, Level, Lerntage, Wochenserie, Quests, Abzeichen (ohne Electron)
 node tests/e2e.mjs               #   Übersicht: Begrüßung, Spielkarte, Leiste, Quests, Karten, Kursseite, Pfad, Liste, Lücken, Lerntag, Profil, Einstellungen, Suche, „Los“, Fokus-Modus
 node tests/lernen.test.mjs       #   Lernen: Gespräch, Bewertung, XP und Combo, Rückschau, Eintragen, Feier, spiel.json, Merkblatt, Record, nächste Lektion
+node tests/unendlich.test.mjs    #   Unendlich: ohne Uhr, Vorausdenken, Eintragen im Hintergrund, ein Verlauf, Comeback-Frage, Übergabe, Rückblick, Moduswechsel
 node tests/ueben.test.mjs        #   Wiederholen: Runde, Hinweis, Abschluss mit XP, Verwerfen, Endloslauf über alle Kurse, „Nur 5 Minuten“
 node tests/sync.test.mjs         #   ILIAS-Sync: Freigaben, Fortschritt, Ergebnis, fehlende Zugangsdaten, Abbrechen
 E2E_BILDER=<Ordner> npm test    # legt dazu Bildschirmfotos ab (Übersicht, Lernen mit Feier, Wiederholen)
@@ -156,3 +173,13 @@ LERNHUB_APP=~/Applications/Lernhub.app/Contents/MacOS/Electron node tests/e2e.mj
 ```
 
 Umgebung: `KURSTUTOR_ROOT`, `LERNHUB_KURSTUTOR_DIR`, `LERNHUB_ILIAS_DIR`, `LERNHUB_SEMESTER`, `LERNHUB_DATEN` (App-Daten), `LERNHUB_DIREKT=1` (tutor.py selbst statt Kurs-Tutor-App), `LERNHUB_PY_HOME` (HOME der Skripte), `LERNHUB_FAKE_AUDIO` (WAV als Mikrofon), `LERNHUB_CLAUDE` (claude-Pfad, im Test die Attrappe), `LERNHUB_TEST_HUB_LANGSAM` (ms, simuliert langsames hub.py).
+
+## Sprechstunde (Wiederholen per Sprache)
+
+Freihändig wiederholen, etwa beim Kochen: Ein Tutor (OpenAI GPT-Live-1.1) fragt mündlich ab, hört zu, erklärt, was nicht saß, und fragt nach. Ergebnisse landen wie beim Wiederholen in `uebung.json` (Leitner), XP und Serie zählen mit.
+
+- Start: Knopf „Sprechstunde“ auf der Kursseite und unter den Kurskarten, ⌘⇧E oder Suche (⌘K).
+- Einmal einrichten: Einstellungen → „OpenAI für die Sprechstunde“: Schlüssel eintragen (verschlüsselt im Schlüsselbund), Stimme (Juni, Nuri, Flitz) und Tempo (ruhig/normal).
+- Im Gespräch: „Pause“, „Nochmal“, „Langsamer“, „Erklär das genauer“, „Überspringen“, „Schluss“. Leertaste = Pause.
+- Kosten: etwa 0,05 $ pro Minute. Lange Pausen (15 Min.) legen auf, „Weitermachen“ verbindet neu.
+- Technik: Keine festen Karten. Der Tutor bekommt alle gelernten Themen als Rahmen (fällige markiert) und führt frei durchs Gespräch. Jeder fertige Satz (Tutor und du) geht an eine lokale Suche über alle erledigten Lektionen und das Glossar (BM25, `src/main/suche.js`, unter 1 ms); passende Stellen legt die App GPT-Live still hin, bevor er sie braucht. Das Backend braucht es nur zum Eintragen, für gezielte Suchen und zum Beenden. Details: `src/main/sprechstunde.js`, Tests: `npm run test:sprechstunde`.

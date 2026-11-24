@@ -19,6 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const P = require('./pfade');
 const B = require('./bruecke');
+const { KATALOG } = require('./bausteine');
 
 const MODELL = process.env.LERNHUB_UEBEN_MODELL || 'opus';
 const EFFORT = process.env.LERNHUB_UEBEN_EFFORT || 'medium';
@@ -70,8 +71,10 @@ Du antwortest IMMER im JSON-Schema, eine Antwort je Zug.
 - **art "abschluss"** = das Werkzeug conclude: ergebnis, urteil, stufe, fehlerart, wiederholen. Die Musterlösung, die du beim Stellen festgelegt hast, sieht der Lernende danach wörtlich; du schreibst sie nicht neu. "text" = deine Schlussworte zu seiner Arbeit. Danach keine neue Aufgabe im selben Zug.
 - **Die Pause.** Nach jedem Abschluss: Fragen zur letzten Aufgabe beantwortest du gründlich, aber gezielt (art "text"), ohne neu zu unterrichten, und stellst am Ende nie eine Aufgabe. Die nächste Aufgabe kommt NUR auf „${NAECHSTE.slice(0, 18)}“ oder wenn er in eigenen Worten die nächste will; dann stellst du sie nach den Auswahlregeln. Du schließt die Runde nie von dir aus ab; ist nichts mehr fällig, ziehst du die Themen vor, die als Nächstes fällig werden. Eine Rückfrage ist nie das Go.
 - **Verwerfen.** Ein [SYSTEMHINWEIS] meldet, dass der Lernende eine Aufgabe verworfen hat: wie ein Abschluss mit Aufgeben behandeln, nicht kommentieren, die Pause gilt.
-- **Formatierung** in "text", "aufgabe", "urteil" und "musterloesung": schlichtes Markdown (**fett**, \`code\`, Codeblöcke mit \`\`\`, Listen mit "- "), keine Tabellen, keine Überschriften, keine LaTeX-Formeln (die App rendert sie nicht; Formeln als Text wie a² + b²).
+- **Formatierung** in "text", "aufgabe", "urteil" und "musterloesung": schlichtes Markdown (**fett**, \`code\`, Codeblöcke mit \`\`\` nur für Programmcode, Befehle und Ausgaben, Rechnungen im Baustein rechnung, Listen mit "- "), keine Tabellen, keine Überschriften, keine LaTeX-Formeln (die App rendert sie nicht; Formeln als Text wie a² + b²). Bausteine (Abschnitt unten) nur in "text", "urteil" und "musterloesung", nie in "aufgabe": Die Aufgabe prüft, ob er die Struktur selbst findet. Einzige Ausnahme: Zahlen, mit denen er rechnen soll, darf die Aufgabe als rechnung zeigen (gesuchte Stellen mit „?“).
 - **Material:** Bash nur für python3 ${P.SCRIPTS}/ueben.py "${s.ws}" (Übersicht, Reihenfolge) und python3 ${P.SCRIPTS}/ueben.py "${s.ws}" --thema <Thema> (Stoff aus den erledigten Lektionen). Lektionsdateien darfst du lesen (Read). Wenn dir eine Tatsache für Aufgabe oder Musterlösung unsicher ist, prüf sie im Stoff, bevor du stellst. Ergebnisse trägt die App selbst ein: --log rufst du nie auf.
+
+${KATALOG}
 
 ${regeln ? '## Kursregeln (aus kurs-tutor UEBEN.md)\n\n' + regeln + '\n\n' : ''}## Doktrin (LearnHarness „Üben“)
 

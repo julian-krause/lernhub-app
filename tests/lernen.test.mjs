@@ -48,6 +48,8 @@ try {
   check(await win.$eval('.app', (a) => a.classList.contains('fokus')) && await win.$eval('.lrn-seite', (x) => getComputedStyle(x).display === 'none')
     && (await win.$$('.fokus-leiste .fokus-seg i')).length === 3 && /\d+ \/ \d+ Min\./.test(await text('.fokus-uhr')), 'Fokus-Modus: rechte Spalte ausgeblendet, Balken mit einem Segment je Schritt und die Uhr unter dem Kopf');
   check(/Schritt-1-Unterricht/.test(await text('.lrn-text')), 'Claudes Unterricht zu Schritt 1 im Verlauf');
+  check((await win.$$('.lrn-text .bs-kette .bs-glied')).length === 3 && !(await win.$('.lrn-text .ueb-code')) && /Danach geht es weiter/.test(await text('.lrn-text')), 'Baustein im Unterricht: Wirkungskette als Grafik, kein Codeblock');
+  await bild('1b-baustein');
   check((await win.$$('.lrn-plan li')).length === 3 && /Schritt A/.test(await text('.lrn-plan li.jetzt')), 'Plan der Lektion rechts, Schritt 1 ist „jetzt“');
   check(/0 \/ \d+ Min\.|1 \/ \d+ Min\./.test(await text('.lrn-uhr')), 'Lektionsuhr läuft gegen das Budget');
   check(!(await win.content()).includes('GEHEIM-ERKL-1'), 'Erklärung bleibt verborgen, solange die Frage offen ist');

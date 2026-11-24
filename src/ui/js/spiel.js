@@ -200,6 +200,19 @@ export function ueben(s, live = false) {
   return neu;
 }
 
+// Unendlich-Modus: Comeback-Frage (eine früher falsch beantwortete Prüffrage, von der App bewertet). Zählt wie eine
+// Prüffrage ohne Combo, genau einmal je Schlüssel (<Sitzung>:c<nr>). Gibt { xp } zurück oder null.
+export function comeback(key, richtig, kurs) {
+  if (!geladen || G.gebucht[key]) return null;
+  const xp = R.xpFrage({ rolle: 'pruefung', urteil: richtig ? 'richtig' : 'falsch', combo: 0, glueck: false });
+  const t = Date.now(), d = tag(t);
+  G.gebucht[key] = { tag: R.tagVon(new Date(t)), xp, glueck: false };
+  d.xp += xp; d.fragen++; if (richtig) d.richtig++;
+  kursDazu(d, kurs); zeitMarke(d, t);
+  pruefen(true);
+  return { xp };
+}
+
 // Beim Start (nach dem Laden der Daten und Sitzungen): still nachbuchen, Abzeichen still freischalten
 export function nachbuchen() {
   if (!geladen || !S.d) return;
@@ -487,7 +500,7 @@ function erinnernPruefen() {
       const ab = e.startTs * 1000;
       if (jetzt >= ab - 60000 && jetzt < ab + 10 * 60000) {
         const c = S.byKey[e.course];
-        melde(`block:${heute}:${e.start}`, 'Dein Lernblock beginnt', `${c ? c.short : e.course || 'Lernen'}: ${n_((e.lessons || []).length, 'Lektion', 'Lektionen')} bis ${e.end} Uhr. Die Flamme wartet schon.`, { name: 'woche' });
+        melde(`block:${heute}:${e.start}`, 'Dein Lernblock beginnt', `${c ? c.short : e.course || 'Lernen'}: Lernblock bis ${e.end} Uhr. Die Flamme wartet schon.`, { name: 'woche' });
       }
     }
   }

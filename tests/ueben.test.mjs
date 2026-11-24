@@ -1,4 +1,4 @@
-// Ende-zu-Ende: Karte „Wiederholen“ auf der Kursseite und auf „Diese Woche“ → Übungsansicht (claude -p als Attrappe). Kopie des Semesters, echte Daten bleiben
+// Ende-zu-Ende: Karte „Wiederholen“ auf der Kursseite, Kachel je Kurs auf „Diese Woche“, Endloslauf über die Suche → Übungsansicht (claude -p als Attrappe). Kopie des Semesters, echte Daten bleiben
 // unberührt. Aufruf: node tests/ueben.test.mjs
 import { _electron as electron } from 'playwright-core';
 import fs from 'fs';
@@ -95,13 +95,14 @@ try {
   await win.waitForSelector('[data-ueb="start"]');
   check(true, 'Runde beenden → zurück zur Startseite');
   check(await fokusAus(win), 'Wiederholen im Fokus-Modus: Seitenleiste ausgeblendet, [data-fokus] holt sie zurück');
-  // Durchlauf über alle Kurse von „Diese Woche“ aus
+  // „Diese Woche“: je Kurs eine Kachel „Wiederholen“, nichts Gemischtes
   await win.click('.side-item[data-nav="woche"]');
-  await win.waitForSelector('.lauf [data-lauf="start"]');
-  const kurse = await win.$$eval('.lauf-kurse .chip', (x) => x.map((e) => e.textContent.trim()));
-  check(kurse.length >= 2, 'Diese Woche: Karte „Wiederholen“ mit den Kursen (' + kurse.join(', ') + ')');
-  check(!(await win.$('[data-lauf-min]')) && !/Min\./.test(await text('.lauf')), 'keine Minuten-Auswahl mehr, nur „Los“');
-  await win.click('[data-lauf="start"]');
+  await win.waitForSelector('#kurse .kk');
+  const kurse = await win.$$eval('#kurse [data-ueben^="kurs|"]', (x) => x.map((e) => e.dataset.ueben));
+  check(kurse.length >= 2 && kurse.includes('kurs|' + KURS) && !(await win.$('[data-lauf]')), 'Diese Woche: Kachel „Wiederholen“ je Kurs (' + kurse.length + '), kein Lauf über alle Kurse');
+  // Endloslauf über alle Kurse: nur noch über die Suche (und ⌘⇧W)
+  const suche = async (q) => { await win.evaluate(() => window.__lernhubTest.suche()); await win.waitForSelector('.palette input'); await win.fill('.palette input', q); await win.keyboard.press('Enter'); };
+  await suche('Wiederholen alle Kurse gemischt');
   await win.waitForSelector('.ueb-dock .ueb-dock-kopf', { timeout: 20000 });
   const kurs1 = await text('.head .crumb');
   const key1 = await win.evaluate(() => window.__lernhubTest.S.lauf.cur);
@@ -142,10 +143,8 @@ try {
   check(await win.evaluate(() => window.__lernhubTest.S.lauf === null && Object.values(window.__lernhubTest.S.ueb).filter(Boolean).length === 0), '„Runde beenden“ beendet den Endloslauf und alle offenen Runden');
   const gemerkt = await win.evaluate(() => JSON.parse(localStorage.getItem('lauf.heute') || 'null'));
   check(gemerkt && Object.values(gemerkt.n).reduce((a, b) => a + b, 0) >= 3, 'heute Geübtes je Kurs gemerkt (' + JSON.stringify(gemerkt && gemerkt.n) + ')');
-  await win.click('.side-item[data-nav="woche"]'); await win.waitForSelector('.lauf');
-  check(/heute schon dran/.test(await text('.lauf')), 'Karte: nächster Start berücksichtigt, was heute schon dran war');
-  // „Nur 5 Minuten“: Endloslauf mit Ring; ist die Zeit um, endet die Aufgabe in Ruhe, dann Ergebnis und „Noch 5?“
-  await win.click('.lauf [data-lauf="kurz"]');
+  // „Nur 5 Minuten“ (Suche): Endloslauf mit Ring; ist die Zeit um, endet die Aufgabe in Ruhe, dann Ergebnis und „Noch 5?“
+  await suche('Nur 5 Minuten');
   await win.waitForSelector('.head .kurz-ring', { timeout: 20000 });
   await win.waitForSelector('.ueb-dock .ueb-dock-kopf', { timeout: 20000 });
   check(/^[45]:\d\d$/.test((await text('[data-kurz-rest]')).trim()) && /Endloslauf/.test(await text('.head')), '„Nur 5 Minuten“ startet den Endloslauf mit einem Ring über 5 Minuten');
