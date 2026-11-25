@@ -659,8 +659,14 @@ L.on.diktatText((x) => {
 // ---------------------------------------------------------------- Nach dem Einsetzen ins DOM
 // Neue Nachricht von Claude: an ihren Anfang scrollen (nicht ans Ende, sonst liest man rückwärts). Sonst bleibt
 // die Stelle, an der man war.
-export function verdrahten(c, { scrollAlt = null } = {}) {
+// still: Die Ansicht stand schon genau so da (nicht neu gezeichnet). Dann nur die Uhr neu stellen, nicht scrollen
+// und den Fokus nicht ins Feld ziehen (sonst springt die Ansicht und eine Textmarkierung geht verloren).
+export function verdrahten(c, { scrollAlt = null, still = false } = {}) {
   const s = sitzung(c);
+  if (!still) einrichten(c, s, scrollAlt);
+  uhrStellen(s);
+}
+function einrichten(c, s, scrollAlt) {
   const v = $('#lrn-view');
   const verdeckt = !!(S.strom && (S.strom.zwischen || (s && S.strom.vorher.some((x) => x.sid === s.id))));
   if (v && S.strom && (!s || verdeckt)) {                    // Strom zwischen zwei Lektionen: zur Comeback-Frage
@@ -686,6 +692,8 @@ export function verdrahten(c, { scrollAlt = null } = {}) {
   }
   const j = document.querySelector('.lrn-roadmap .jetzt'), seite = document.querySelector('.lrn-roadmap');
   if (j && seite && !verdrahten.roadmap) { seite.scrollTop = Math.max(0, j.offsetTop - seite.clientHeight / 2); verdrahten.roadmap = true; }
+}
+function uhrStellen(s) {
   clearInterval(uhr);
   if (s && s.zustand !== 'erledigt') {
     uhr = setInterval(() => {

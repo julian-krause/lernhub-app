@@ -67,6 +67,24 @@ function parse(s) {
   return name === 'kurs' ? { name, slug, tab } : { name };
 }
 
+// ---------------------------------------------------------------- Neu zeichnen ohne Flackern
+// Hintergrund-Ereignisse (Lektion, hub.py, iCloud, Sync, Log) zeichnen oft dieselbe Ansicht neu. Gleiches HTML bleibt
+// stehen. Ist es neu, spielen Karten und Chips, die vorher schon da waren, ihre Einblend-Animation nicht noch einmal.
+// Gibt zurück, ob das DOM ersetzt wurde.
+const EINBLENDEN = ['.ueb-karte', '.combo', '.warten-tipp'];
+function setzen(el, html, gleicheAnsicht = true) {
+  if (gleicheAnsicht && el.__html === html && el.firstElementChild) return false;
+  const vorher = gleicheAnsicht ? EINBLENDEN.map((s) => [...el.querySelectorAll(s)].map((x) => x.textContent)) : null;
+  el.innerHTML = html; el.__html = html;
+  if (vorher) EINBLENDEN.forEach((s, k) => {
+    el.querySelectorAll(s).forEach((x, i) => {
+      // Karten nach Position (ihr Text ändert sich beim Aufdecken), Chips nur, wenn sie gleich geblieben sind
+      if (i < vorher[k].length && (s === '.ueb-karte' || vorher[k][i] === x.textContent)) x.classList.add('ruhig');
+    });
+  });
+  return true;
+}
+
 // Fokus-Modus: In Lernen und Wiederholen verschwinden Seitenleiste und rechte Spalte (bleiben im DOM)
 function fokusSetzen() {
   $('.app').classList.toggle('fokus', Sp.fokusAn() && MODI.includes(S.route.name));
@@ -76,14 +94,15 @@ async function zeichnen() {
   nachzeichnen = false;
   fokusSetzen();
   if (!S.d) {
-    if (S.fehler) $('#ansicht').innerHTML = `<div class="view"><div class="leer-start"><h2>Daten noch nicht da</h2>
+    if (S.fehler) setzen($('#ansicht'), `<div class="view"><div class="leer-start"><h2>Daten noch nicht da</h2>
       <p class="muted">${esc(S.fehler)}</p><p class="muted">${S.icloud && S.icloud.zustand === 'laeuft' ? `iCloud lädt gerade ${S.icloud.fertig}/${S.icloud.gesamt} Dateien zurück auf den Mac. ` : ''}Lernhub versucht es alle 20 Sekunden erneut.</p>
-      <button class="btn" data-reload>${ico('refresh')}Jetzt erneut versuchen</button></div></div>`;
+      <button class="btn" data-reload>${ico('refresh')}Jetzt erneut versuchen</button></div></div>`);
     return;
   }
   const el = $('#ansicht');
   const r = S.route;
   const c = r.slug ? S.bySlug[r.slug] : null;
+  const gleich = zeichnen.letzte === r;           // dieselbe Ansicht noch einmal (kein Wechsel)
   let html = '';
   try {                                           // eine Ansicht, die wirft, darf nie stumm auf der alten Seite stehen bleiben
   if (r.name === 'lerntag') html = V.lerntag();
@@ -91,21 +110,23 @@ async function zeichnen() {
   else if (r.name === 'ueben' && c && c.hasRoadmap) {
     if (!(c.key in S.ueb)) await U.laden(c);
     if (S.route !== r) return;                    // inzwischen woanders hin navigiert
-    el.innerHTML = U.ansicht(c); zeichnen.letzte = r; U.verdrahten(c);
+    const neu = setzen(el, U.ansicht(c), gleich); zeichnen.letzte = r; U.verdrahten(c, { still: !neu });
     return;
   }
   else if (r.name === 'sprech' && c && c.hasRoadmap) {
-    el.innerHTML = Sh.ansicht(c); zeichnen.letzte = r; Sh.verdrahten(c);
+    el.__html = null;                             // Sprechstunde zeichnet Teile selbst nach: immer ganz neu
+    setzen(el, Sh.ansicht(c), gleich); zeichnen.letzte = r; Sh.verdrahten(c);
     return;
   }
   else if (r.name === 'lernen' && c && c.hasRoadmap) {
     if (Ln.brauchtLaden(c)) await Ln.laden(c);
     if (S.route !== r) return;
-    const alt = el.querySelector('#lrn-view'), scrollAlt = alt && zeichnen.letzte === r ? alt.scrollTop : null;
-    const seite = el.querySelector('.lrn-roadmap'), seiteAlt = seite && zeichnen.letzte === r ? seite.scrollTop : null;
-    el.innerHTML = Ln.ansicht(c); zeichnen.letzte = r;
-    if (seiteAlt != null && el.querySelector('.lrn-roadmap')) el.querySelector('.lrn-roadmap').scrollTop = seiteAlt;
-    Ln.verdrahten(c, { scrollAlt });
+    const gleichL = zeichnen.letzte === r;
+    const alt = el.querySelector('#lrn-view'), scrollAlt = alt && gleichL ? alt.scrollTop : null;
+    const seite = el.querySelector('.lrn-roadmap'), seiteAlt = seite && gleichL ? seite.scrollTop : null;
+    const neu = setzen(el, Ln.ansicht(c), gleichL); zeichnen.letzte = r;
+    if (neu && seiteAlt != null && el.querySelector('.lrn-roadmap')) el.querySelector('.lrn-roadmap').scrollTop = seiteAlt;
+    Ln.verdrahten(c, { scrollAlt, still: !neu });
     return;
   }
   else if (r.name === 'einstellungen') { await Sh.einstellungenLaden(); html = V.einstellungen(await L.einstellungen(true), S.info); }
@@ -118,10 +139,10 @@ async function zeichnen() {
       <button class="btn" data-reload>${ico('refresh')}Neu laden</button></div></div>`;
   }
   const alt = el.querySelector('.view'), scroll = alt && S.route === zeichnen.letzte ? alt.scrollTop : 0;
-  el.innerHTML = html;
+  const neu = setzen(el, html, S.route === zeichnen.letzte);
   zeichnen.letzte = S.route;
   const v = el.querySelector('.view'), h = el.querySelector('.head');
-  if (v) {
+  if (v && neu) {
     v.scrollTop = scroll;
     v.addEventListener('scroll', () => h && h.classList.toggle('scrolled', v.scrollTop > 4), { passive: true });
   }
@@ -166,7 +187,7 @@ function laufend() {
 }
 function seitenleiste() {
   const el = $('#sidebar');
-  if (!S.d) { el.innerHTML = `<div class="side-top drag"></div><p class="side-h">Lädt …</p>${icloudZeile()}`; return; }
+  if (!S.d) { setzen(el, `<div class="side-top drag"></div><p class="side-h">Lädt …</p>${icloudZeile()}`); return; }
   const r = S.route;
   const on = (n, slug) => (r.name === n && (!slug || r.slug === slug) ? ' on' : '');
   const st = S.d.stats;
@@ -181,7 +202,7 @@ function seitenleiste() {
   const lf = laufend().map((x) => `<button class="side-item side-open${on(x.modus, x.c.slug)}" data-nav="${x.modus}:${x.c.slug}" style="${cc(x.c)}" title="${esc(x.titel)}">
       <span class="em">${x.denkt ? '<span class="rec" title="Claude antwortet"></span>' : ico(x.modus === 'lernen' ? 'grad' : x.modus === 'sprech' ? 'headset' : 'target')}</span><span class="lbl">${esc(x.text)}</span></button>`).join('');
   const stand = S.d.generated ? new Date(S.d.generated) : null;
-  el.innerHTML = `<div class="side-top drag"></div>
+  setzen(el, `<div class="side-top drag"></div>
     ${Sp.seitenKarte(r.name === 'profil')}
     <button class="side-search" data-suche>${ico('search')}<span>Suchen</span><kbd>⌘K</kbd></button>
     <div class="side-scroll">
@@ -194,7 +215,7 @@ function seitenleiste() {
     ${icloudZeile()}${syncZeile()}
     <div class="side-foot"><button class="icon-btn${on('einstellungen')}" data-nav="einstellungen" title="Einstellungen (⌘,)">${ico('gear')}</button>
       <span class="stand${S.alt ? ' alt' : ''}" title="${S.alt ? 'Gespeicherter Stand. hub.py rechnet noch (iCloud lädt evtl. Dateien nach).' : 'Stand der Daten (hub.py)'}">${stand ? (S.alt ? 'Stand ' + standText(stand) + ' · lädt' : 'Stand ' + stand.toTimeString().slice(0, 5)) : ''}</span>
-      <button class="icon-btn ${S.laden ? 'spin' : ''}" data-reload title="Neu laden (⌘R)">${ico('refresh')}</button></div>`;
+      <button class="icon-btn ${S.laden ? 'spin' : ''}" data-reload title="Neu laden (⌘R)">${ico('refresh')}</button></div>`);
 }
 
 function standText(d) {
@@ -367,5 +388,5 @@ L.on.icloud((x) => {
   seitenleiste(); await zeichnen();
   Sp.willkommen();                                    // einmal: was das Spiel aus dem bisherigen Verlauf schon weiß
   Sp.erinnern();                                      // Lernblock beginnt, Serie wird knapp
-  window.__lernhubTest = { S, nav, suche };          // für die Ende-zu-Ende-Tests
+  window.__lernhubTest = { S, nav, suche, zeichnen, seitenleiste };          // für die Ende-zu-Ende-Tests
 })();

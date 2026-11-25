@@ -382,6 +382,8 @@ button.side-icloud:hover { background: var(--side-hover); }
 ul.ueb-liste { list-style: disc; } ol.ueb-liste { list-style: decimal; }
 .ueb-liste li + li { margin-top: 3px; }
 .ueb-karte { background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius); padding: 14px 16px; animation: rein .2s ease-out; }
+/* Beim Neuzeichnen derselben Ansicht blenden sich Karten und Chips, die schon da waren, nicht noch einmal ein (app.js setzen) */
+.ueb-karte.ruhig, .combo.ruhig, .warten-tipp.ruhig { animation: none; }
 .ueb-claude { padding: 2px 4px; }
 .ueb-ich { display: flex; justify-content: flex-end; }
 .ueb-gedanken { max-width: 85%; border-left: 3px solid color-mix(in srgb, var(--cc) 55%, var(--rule)); padding: 4px 0 4px 12px; }

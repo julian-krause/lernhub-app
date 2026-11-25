@@ -332,6 +332,7 @@ function fenster() {
       sandbox: true, spellcheck: false,
     },
   });
+  if (process.env.LERNHUB_TEST) win.webContents.setAudioMuted(true);     // Tests laufen stumm: keine Spiel-Töne, keine Stimme
   win.loadURL('app://ui/index.html');
   win.once('ready-to-show', () => win.show());
   win.on('focus', () => { an('fenster:fokus'); if (Date.now() - icloud.um > 15 * 60000) icloudVorrat(); });

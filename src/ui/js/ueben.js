@@ -386,11 +386,12 @@ L.on.diktatText((x) => {
 });
 
 // Nach dem Einsetzen ins DOM: ans Ende scrollen, Feld fokussieren, Uhr fürs Warten
-export function verdrahten(c, { fokus = true } = {}) {
+// still: Die Ansicht stand schon genau so da (nicht neu gezeichnet). Dann nicht scrollen und keinen Fokus ziehen.
+export function verdrahten(c, { fokus = true, still = false } = {}) {
   const v = $('#ueb-view');
-  if (v) v.scrollTop = v.scrollHeight;
+  if (v && !still) v.scrollTop = v.scrollHeight;
   const ta = $('#ueb-text');
-  if (ta) {
+  if (ta && !still) {
     ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight + 2, 260) + 'px';
     if (fokus && !ta.disabled) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
   }
@@ -406,7 +407,7 @@ export function verdrahten(c, { fokus = true } = {}) {
   }
   kurzLaufen(); kurzTick();
   // „Gelöst“ gerade live: kleiner Konfetti-Stoß aus dem Ergebnis-Chip
-  const knall = document.querySelector('.ueb-abschluss.neu .chip.erg.ok');
+  const knall = !still && document.querySelector('.ueb-abschluss.neu .chip.erg.ok');
   if (knall) stoss(knall, 40);
 }
 

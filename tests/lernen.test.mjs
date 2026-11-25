@@ -73,6 +73,16 @@ try {
   await bild('1-falsch');
   check(/\+2 XP/.test(await text('.lrn-frage[data-frage="1"] .chip.xp')) && /Noch nicht|Knapp daneben|Fast|Daraus lernst/.test(await text('.lrn-frage[data-frage="1"] .lrn-lob')), 'Spiel: XP-Chip „+2 XP“ auf der Fragekarte und eine Zeile Trost');
   await win.waitForSelector('.lrn-frage[data-frage="2"].offen', { timeout: 15000 });
+  // Kein Flackern: Neuzeichnen (wie bei Hintergrund-Ereignissen) ersetzt nichts, was gleich bleibt, und Karten,
+  // die schon da waren, blenden sich nicht noch einmal ein
+  const flackern = await win.evaluate(async () => {
+    const T = window.__lernhubTest, k = () => document.querySelector('.lrn-frage[data-frage="1"]');
+    k().__markiert = true; document.querySelector('#sidebar').firstElementChild.__markiert = true;
+    await T.zeichnen(); await T.zeichnen(); T.seitenleiste(); T.seitenleiste();
+    const karte = k(), ruhig = karte.__markiert || (karte.classList.contains('ruhig') && getComputedStyle(karte).animationName === 'none');
+    return { ruhig, leiste: !!document.querySelector('#sidebar').firstElementChild.__markiert, neu: getComputedStyle(document.querySelector('.lrn-frage[data-frage="2"]')).animationName };
+  });
+  check(flackern.ruhig && flackern.leiste, 'kein Flackern: Neuzeichnen lässt Fragekarten und Seitenleiste stehen bzw. ohne neue Einblendung');
   const z2 = zuege().find((z) => /^Antwort auf Frage 1 /.test(z.ein)).ein;
   check(/FALSCH, richtig ist B\)/.test(z2) && /Sicherheit: sicher/.test(z2) && /\[Lektionsuhr: \d+ von \d+ Min\.\]/.test(z2), 'Claude bekommt Wahl, Ergebnis, Sicherheit und die Lektionsuhr');
 
