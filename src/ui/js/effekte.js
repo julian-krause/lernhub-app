@@ -1,41 +1,46 @@
-// Effekte fürs Spiel: Töne (WebAudio, Oszillatoren), Konfetti auf einem eigenen <canvas>, hochzählende Zahlen.
+// Effekte fürs Spiel: Klänge (echte Aufnahmen, WebAudio), Konfetti auf einem eigenen <canvas>, hochzählende Zahlen.
 // Alles leise und kurz. Unter „Bewegung reduzieren“ (prefers-reduced-motion) gibt es kein Konfetti und kein Hochzählen.
-// Der AudioContext entsteht erst bei der ersten Eingabe (Autoplay-Regeln); jeder Aufruf steht in try/catch.
+// Der AudioContext entsteht erst bei der ersten Eingabe (Autoplay-Regeln), dann werden die Klänge einmal geladen;
+// jeder Aufruf steht in try/catch. Klänge: ui/klaenge/*.wav, Quellen und Bauplan in ui/klaenge/QUELLEN.md.
 let ctx = null;
 let tonErlaubt = () => true;
 export function tonSchalter(fn) { tonErlaubt = fn; }
 export const ruhig = () => { try { return matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; } };
 
+// Name → Lautstärke (0–1). Alle Dateien sind auf −1 dBFS normalisiert, die Mischung passiert hier.
+const KLAENGE = { auswahl: 0.22, richtig: 0.42, serie: 0.42, falsch: 0.38, geschafft: 0.4, feier: 0.36 };
+const puffer = {};
+function laden() {
+  for (const name of Object.keys(KLAENGE)) {
+    fetch(`klaenge/${name}.wav`).then((r) => r.arrayBuffer()).then((b) => ctx.decodeAudioData(b))
+      .then((p) => { puffer[name] = p; }).catch(() => { });
+  }
+}
 function anlegen() {
   if (ctx) return;
-  try { const AC = window.AudioContext || window.webkitAudioContext; if (AC) ctx = new AC(); } catch { ctx = null; }
+  try { const AC = window.AudioContext || window.webkitAudioContext; if (AC) { ctx = new AC(); laden(); } } catch { ctx = null; }
 }
 window.addEventListener('pointerdown', anlegen, { capture: true });
 window.addEventListener('keydown', anlegen, { capture: true });
 
-const LAUT = 0.08;
-// Töne nacheinander: [Frequenz in Hz, …], je dauer Sekunden, Abstand abstand Sekunden
-function folge(freqs, { typ = 'sine', dauer = 0.13, abstand = 0.09, laut = LAUT } = {}) {
-  if (!ctx || !tonErlaubt()) return;
+function spielen(name) {
+  if (!ctx || !tonErlaubt() || !puffer[name]) return;
   try {
     if (ctx.state === 'suspended') ctx.resume();
-    const t0 = ctx.currentTime + 0.01;
-    freqs.forEach((f, i) => {
-      const o = ctx.createOscillator(), g = ctx.createGain(), t = t0 + i * abstand;
-      o.type = typ; o.frequency.setValueAtTime(f, t);
-      g.gain.setValueAtTime(0.0001, t);
-      g.gain.exponentialRampToValueAtTime(laut, t + 0.015);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + dauer);
-      o.connect(g); g.connect(ctx.destination);
-      o.start(t); o.stop(t + dauer + 0.02);
-    });
+    const q = ctx.createBufferSource(), g = ctx.createGain();
+    q.buffer = puffer[name]; g.gain.value = KLAENGE[name];
+    q.connect(g); g.connect(ctx.destination);
+    q.start(ctx.currentTime + 0.005);
   } catch { }
 }
 export const ton = {
-  richtig: () => folge([660, 990], { dauer: 0.14, abstand: 0.085 }),           // zwei steigende Sinustöne
-  falsch: () => folge([174], { typ: 'triangle', dauer: 0.32 }),                // ein weicher tiefer Ton
-  geschafft: () => folge([523, 659, 784, 1047], { dauer: 0.2, abstand: 0.11 }), // vier Töne aufwärts
-  klick: () => folge([880], { dauer: 0.05, laut: LAUT / 2 }),
+  auswahl: () => spielen('auswahl'),     // Option angetippt: kurzer Bubble-Pop
+  richtig: () => spielen('richtig'),     // Kalimba G4 → D5
+  serie: () => spielen('serie'),         // ab 3 richtig in Folge: Kalimba G4 H4 D5 G5
+  falsch: () => spielen('falsch'),       // Kalimba D4 → H3, gedämpft
+  geschafft: () => spielen('geschafft'), // Quest, Tagesziel, Lektion: Kalimba-Kaskade über zwei Oktaven
+  feier: () => spielen('feier'),         // Lektions-Feier: Harfen-Glissando
+  klick: () => spielen('auswahl'),
 };
 
 // ---------------------------------------------------------------- Konfetti

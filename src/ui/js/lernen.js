@@ -321,7 +321,9 @@ function comebackKarte() {
 function cbWaehlen(i) {
   const z = S.strom && S.strom.zwischen;
   if (!z || z.auf || i < 0 || i >= z.fragen[z.i].optionen.length) return;
-  z.wahl = z.wahl === i ? null : i; hooks.zeichnen();
+  z.wahl = z.wahl === i ? null : i;
+  if (z.wahl != null) ton.auswahl();
+  hooks.zeichnen();
 }
 function cbPruefen() {
   const z = S.strom && S.strom.zwischen;
@@ -793,7 +795,7 @@ function rueckmelden(s, fragen) {
     if (f.rolle !== 'pruefung') { rueck[key] = { art: 'info', text: `Mitgemacht: +${f.xp} XP` }; continue; }
     if (f.urteil === 'richtig') {
       rueck[key] = { art: 'ok', combo: f.combo, text: `${Sp.lobText(f.combo, f.nr)} +${f.xp} XP${f.glueck ? ' · Glückstreffer, doppelt!' : ''}${f.combo >= 2 ? ` · ${f.combo} in Folge` : ''}` };
-      klang = klang || 'richtig';
+      klang = klang || (f.combo >= 3 ? 'serie' : 'richtig');
     } else if (f.urteil === 'teils') { rueck[key] = { art: 'teils', text: `Halb richtig. +${f.xp} XP` }; klang = klang || 'richtig'; }
     else { rueck[key] = { art: 'bad', text: `${Sp.trostText(f.nr)} Die richtige Antwort ist markiert. +${f.xp} XP` }; klang = 'falsch'; }
   }
@@ -885,6 +887,7 @@ function waehlen(c, i) {
   const s = sitzung(c), q = offeneFrage(s);
   if (!q || q.frei || s.zustand === 'denkt' || i < 0 || i >= q.optionen.length) return;
   wahl[c.key] = wahl[c.key] === i ? null : i;
+  if (wahl[c.key] != null) ton.auswahl();
   document.querySelectorAll('.lrn-frage.offen [data-lrn-opt]').forEach((b) => b.classList.toggle('gew', +b.dataset.lrnOpt === wahl[c.key]));
   knopfNeu(c);
 }

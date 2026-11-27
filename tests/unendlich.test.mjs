@@ -85,7 +85,7 @@ try {
   check((await win.$$('.strom-vorher .lrn-frage')).length >= 4 && /Das steht jetzt/.test(await text('.strom-vorher')) && !(await win.$('.lrn-rueck, .strom-ms, [data-lrn="eintragen"]')), 'der Verlauf davor bleibt stehen, der Abschluss ist eine normale Nachricht: keine Rückschau, keine Karte, kein Knopf');
   const richtig = await win.$$eval('.strom-cb [data-cb-opt]', (bs) => bs.findIndex((b) => b.textContent.includes('refs/heads/dev')));
   const reihe = await win.$$eval('.strom-cb [data-cb-opt] .ueb-prose', (xs) => xs.map((x) => x.textContent.trim()).join('|'));
-  check(richtig >= 0 && reihe !== 'auf den Commit|auf refs/heads/dev|auf den Tree', 'Optionen sind neu gemischt: ' + reihe);
+  check(richtig >= 0 && reihe !== 'auf den Commit|auf refs/heads/dev|auf den Tree|auf den Index', 'Optionen sind neu gemischt: ' + reihe);
   await win.keyboard.press(String(richtig + 1));
   await win.keyboard.press('Enter');
   await warte(async () => /Richtig/.test(await text('.strom-cb .chip')), { text: 'Comeback bewertet' });

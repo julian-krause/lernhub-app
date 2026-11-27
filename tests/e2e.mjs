@@ -46,6 +46,14 @@ try {
   check(!/Weitermachen|Wochenstart|Bereit zum Lernen|Erstellen|wird erstellt/.test(ganz), 'kein Weitermachen, kein Wochenstart, kein Erstellen, keine „bereiten Lektionen“');
   check(!(await win.$('webview')) && !(await win.$('#lektion')) && !(await win.$('.auftraege')), 'kein Lektions-Fenster und keine Auftragskarten im Dokument');
   check(!/GEÖFFNET/.test(await text('#sidebar')), 'Seitenleiste ohne „GEÖFFNET“');
+  const klaenge = await win.evaluate(async () => {
+    const c = new AudioContext(), aus = {};
+    for (const n of ['auswahl', 'richtig', 'serie', 'falsch', 'geschafft', 'feier']) {
+      try { aus[n] = (await c.decodeAudioData(await (await fetch(`klaenge/${n}.wav`)).arrayBuffer())).duration; } catch { aus[n] = 0; }
+    }
+    c.close(); return aus;
+  });
+  check(Object.values(klaenge).every((d) => d > 0.05 && d < 2), 'alle sechs Klänge laden über app:// und lassen sich dekodieren: ' + JSON.stringify(klaenge));
   check(/Level \d+/.test(await text('#sidebar .side-spiel')) && /Woche/.test(await text('#sidebar .side-spiel')) && (await win.$('#sidebar .side-spiel .zring')) !== null, 'Seitenleiste: Karte mit Level, Rang, XP-Balken, Wochenserie und Tagesziel-Ring');
   check((await win.$$('.spiel-leiste .wp')).length === 7 && /Tagesziel/.test(await text('.spiel-leiste')) && /Serie/.test(await text('.spiel-leiste')), 'Startseite: Leiste mit Tagesziel, Wochenpunkten Mo–So, Serie und Level');
   check((await win.$$('.quests .quest')).length === 3 && (await win.$('.quests .truhe')) !== null, 'Startseite: Karte „Tagesquests“ mit drei Quests und Truhe');
@@ -92,7 +100,7 @@ try {
   await win.waitForSelector('.agenda, .empty');
   if (await win.$('.agenda .ev.block')) {
     const titel = await win.$$eval('.ev.block .ttl', (t) => t.map((x) => x.textContent.trim()));
-    check(titel.every((t) => /^Lernblock|^Probeklausur/.test(t)) && !(await win.$('.ev.block .lchip')) && !/\bL\d{4}/.test(await text('.agenda')), 'Lerntag: nur allgemeine Lernblöcke, kein Fach, keine Lektionen');
+    check(titel.every((t) => /^(Kurzer )?Lernblock|^Probeklausur/.test(t)) && !(await win.$('.ev.block .lchip')) && !/\bL\d{4}/.test(await text('.agenda')), 'Lerntag: nur allgemeine Lernblöcke, kein Fach, keine Lektionen');
     check(!(await win.$('.agenda [data-lesson], .agenda [data-erstellen]')), 'Lerntag: Lektionen öffnen kein Lektions-Fenster, „Lernen“ startet den Kurs');
   }
   check((await text('.acts-grid')).includes('Plan & Kalender abgleichen'), 'Lerntag: Abgleich-Aktionen');

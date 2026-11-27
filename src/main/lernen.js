@@ -59,7 +59,7 @@ const SCHEMA = {
     schritt: { type: 'integer', description: 'frage: Nummer des Plan-Schritts (ab 1), zu dem Unterricht und Frage gehören.' },
     rolle: { type: 'string', enum: ['pruefung', 'abruf', 'vorhersage'], description: 'frage: pruefung (nach der Erklärung, zählt) oder vorhersage (vor dem Schritt, zählt nicht). abruf nicht benutzen.' },
     frage: { type: 'string', description: 'frage: der Fragetext. Steht für sich: Fall, Zahlen und der Code, um den es geht, stehen hier. Kein Verweis auf frühere Lektionen, die Vorlesung oder Folien.' },
-    optionen: { type: 'array', items: { type: 'string' }, description: 'frage: 2–4 Optionen für eine Auswahlfrage, ohne Buchstaben davor. Leer = freie Antwort.' },
+    optionen: { type: 'array', items: { type: 'string' }, description: 'frage: genau 4 Optionen für eine Auswahlfrage, ohne Buchstaben davor: die richtige und 3 plausible Fehlantworten. Leer = freie Antwort.' },
     richtig: { type: 'integer', description: 'frage mit Optionen: Index der richtigen Option, ab 0.' },
     loesung: { type: 'string', description: 'frage ohne Optionen: die festgelegte richtige Antwort, kurz.' },
     erklaerung: { type: 'string', description: 'frage: warum die richtige Antwort richtig ist. Erst begründen, dann richtig/loesung festlegen. Der Lernende sieht sie nach seiner Antwort.' },
@@ -101,6 +101,7 @@ Du antwortest IMMER im JSON-Schema, eine Antwort je Zug.
 
 - **art "frage"** ist der normale Zug: "text" = erst die Auflösung seiner letzten Antwort, dann der Unterricht EINES Schritts; danach genau EINE Frage in den Feldern frage, rolle, optionen + richtig (Auswahl) oder loesung (frei), erklaerung, schritt. Der Zug endet damit. Eine Frage als Fließtext in "text" ist ein Protokollbruch: Die App zeigt nur die Felder als Fragekarte.
 - Im ERSTEN Zug zusätzlich "plan": die Titel der Schritte (höchstens ${s.maxSchritte}). Du fragst nicht, ob der Plan passt, sondern unterrichtest sofort Schritt 1.
+- **Auswahlfrage = immer genau 4 Optionen**, nie 2 oder 3: die richtige und 3 Fehlantworten. Jede Fehlantwort ist ein typischer Denkfehler oder eine echte Verwechslung aus dem Stoff, keine offensichtlich absurde Füllung. Alle vier sind ähnlich lang und gleich konkret, die richtige verrät sich nicht durch Länge oder Genauigkeit. Kein „alle genannten“ und kein „keine davon“. Die Position der richtigen Option wechselt.
 - **Auswahlfrage:** Die App bewertet sie selbst und zeigt dem Lernenden sofort Richtig oder Falsch, die richtige Option und deine erklaerung. Du bekommst seine Wahl, das Ergebnis, seine Sicherheit und seine Gedanken. Bei einer Vorhersage zeigt die App nichts davon: Du löst sie zu Beginn des nächsten Zugs auf.
 - **Freie Frage:** Du bekommst seinen Text und setzt im nächsten Zug "bewertung" (richtig, teils, falsch). Erst dann sieht er loesung und erklaerung. War sein Text keine Antwort, sondern eine Rückfrage: bewertung "keine", art "text", die Frage bleibt offen.
 - **art "text"**: Antwort auf eine Rückfrage, ohne neue Frage. Ist dabei noch eine Frage offen, bleibt sie offen. Ist keine offen, wartet die App auf sein Go („[WEITER]“) oder seine nächste Nachricht.
@@ -550,7 +551,7 @@ class Lernen {
       const schritt = Number.isInteger(x.schritt) && x.schritt > 0 ? x.schritt : Math.max(1, s.schritt);
       s.schritt = schritt;
       if (text) s.verlauf.push({ von: 'claude', art: 'text', text, schritt, t });
-      const optionen = (Array.isArray(x.optionen) ? x.optionen : []).map((o) => String(o).trim()).filter(Boolean).slice(0, 5);
+      const optionen = (Array.isArray(x.optionen) ? x.optionen : []).map((o) => String(o).trim()).filter(Boolean).slice(0, 4);
       const mitWahl = optionen.length >= 2 && Number.isInteger(x.richtig) && x.richtig >= 0 && x.richtig < optionen.length;
       const rolle = ['vorhersage', 'abruf'].includes(x.rolle) ? x.rolle : 'pruefung';
       s.stat.gestellt++; if (rolle === 'vorhersage') s.stat.vorhersagen++;

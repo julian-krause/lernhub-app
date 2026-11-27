@@ -225,7 +225,7 @@ export function nachbuchen() {
 export const lobText = (combo, n) => R.lob(combo, n);
 export const trostText = (n) => R.trost(n);
 export const xpChip = (b) => (b ? `<span class="chip xp${b.glueck ? ' glueck' : ''}" title="${b.glueck ? 'Glückstreffer: doppelte XP' : 'XP für diese Antwort'}">${ico(b.glueck ? 'sparkles' : 'star')}+${b.xp} XP${b.glueck ? ' · ×2' : ''}</span>` : '');
-export const comboChip = (n) => (n >= 2 ? `<span class="combo" title="${n} in Folge richtig">${ico('flame')}<span>${n}er-Combo</span></span>` : '');
+export const comboChip = (n) => (n >= 2 ? `<span class="combo" data-neu="${n}" title="${n} in Folge richtig">${ico('flame')}<span>${n}er-Combo</span></span>` : '');
 
 // ---------------------------------------------------------------- Warten auf Claude: Balken über die erwartete Dauer
 // Erwartet: Mittel der bisherigen Züge dieser Sitzung (von deiner Eingabe bis zu Claudes Antwort), sonst 12 s,
@@ -317,7 +317,7 @@ export function feier({ s, naechste, beiNaechste }) {
   feierZu = () => { document.removeEventListener('keydown', tasten, true); el.remove(); feierZu = null; };
   const knopf = el.querySelector('[data-feier="naechste"]') || el.querySelector('[data-feier="zu"]');
   if (knopf) knopf.focus({ preventScroll: true });
-  ton.geschafft();
+  ton.feier();
   konfetti({ menge: 160 });
   hochzaehlen(el.querySelector('[data-feier-xp]'), xp, { vor: '+', ms: 1100 });
   const balken = el.querySelector('[data-feier-balken]');
