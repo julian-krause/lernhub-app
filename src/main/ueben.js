@@ -41,6 +41,8 @@ const SCHEMA = {
     stufe: { type: 'string', enum: ['keine', 'R0', 'R1', 'R2', 'R3', 'R4', 'R5'], description: 'abschluss: höchste Hinweis-Sprosse, die nötig war. text: die Sprosse, falls der Text ein Hinweis ist.' },
     fehlerart: { type: 'string', enum: ['keine', 'Abruf', 'Verwechslung', 'Ausführung', 'Flüchtigkeit', 'strukturell'] },
     wiederholen: { type: 'boolean', description: 'abschluss: in dieser Runde in neuer Oberfläche erneut prüfen.' },
+    optionen: { type: 'array', items: { type: 'string' }, description: 'aufgabe, nur im Leise-Modus: genau 4 Antworten zur Auswahl, ohne Buchstaben davor: die richtige und 3 typische Denkfehler. Sonst leer.' },
+    richtig: { type: 'integer', description: 'aufgabe mit optionen: Index der richtigen Option, ab 0.' },
   },
   required: ['art', 'text'],
 };
@@ -53,6 +55,19 @@ const EINGABE = {
   weiter: () => NAECHSTE,
 };
 const VERWORFEN = '[SYSTEMHINWEIS] Der Lernende hat die offene Aufgabe verworfen, ohne die Lösung zu sehen. Sie ist damit abgeschlossen wie mit conclude(outcome "dismissed"): als volles Aufgeben werten und später in neuer Form erneut prüfen, falls sie wichtig war. Nicht weiter kommentieren; die Pause gilt.';
+
+// Leise-Modus (iPhone-App, docs/handy.md): Er kann nicht diktieren und tippt ungern. Die Regeln gehen einmal je Runde
+// mit seiner ersten Nachricht im Leise-Modus mit, danach nur die Marke (wie in main/lernen.js).
+const LEISE_REGELN = `[Leise-Modus, Regeln bis auf Widerruf:]
+Der Lernende übt gerade am iPhone, leise und unterwegs: Er kann nicht diktieren und tippt ungern.
+- **Jede Aufgabe mit Auswahl:** Zu jeder art "aufgabe" gibst du optionen (genau 4) und richtig (Index ab 0). Die Aufgabe bleibt eine echte Abrufaufgabe, die er im Kopf löst: Er rechnet, ordnet oder begründet erst und wählt dann. Die drei Fehlantworten sind typische Denkfehler aus dem Stoff (Verwechslung, falscher Zwischenschritt, Flüchtigkeit), alle vier ähnlich lang und gleich konkret, die Position der richtigen wechselt. Kein „alle genannten“, kein „keine davon“. Die musterloesung zeigt den Weg zur richtigen Option.
+- **Seine Wahl** kommt als „Gewählt (Versuch n): B) … → RICHTIG/FALSCH“; Richtig oder Falsch hat die App ihm schon gezeigt, die richtige Option erst nach dem Abschluss. Richtig im ersten Versuch → abschluss geloest. Falsch im ersten Versuch → art "text": in ein, zwei Sätzen verorten, wo der Denkfehler liegt, ohne die richtige Option zu verraten (stufe R1 oder R2); er wählt noch einmal. Richtig im zweiten Versuch → abschluss hinweise. Falsch im zweiten Versuch → abschluss weiter, wiederholen true.
+- **Knöpfe statt Text:** „Hinweis bitte“ = die nächste Sprosse der Hinweisleiter. „Ich gebe auf“ = abschluss aufgegeben. Rückfragen in der Pause kommen oft als Knöpfe („Warum ist das so?“, „Noch ein Beispiel“): kurz und gezielt beantworten.
+- **Fürs Handy schreiben:** kurz, Codeblöcke schmal (höchstens etwa 40 Zeichen je Zeile).
+[Leise-Modus]`;
+const LEISE_KURZ = '[Leise-Modus]';
+const LEISE_AUS = '[Leise-Modus aus: Er kann wieder schreiben und diktieren. Aufgaben wieder ohne optionen, Antworten im Feld „Deine Gedanken“.]';
+const BUCHSTABE = (i) => String.fromCharCode(65 + i);
 
 function lies(f) { try { return fs.readFileSync(f, 'utf8'); } catch { return ''; } }
 
@@ -81,13 +96,19 @@ ${regeln ? '## Kursregeln (aus kurs-tutor UEBEN.md)\n\n' + regeln + '\n\n' : ''}
 ${doktrin}`;
 }
 
-function startText(uebersicht) {
+function startText(uebersicht, leise = false) {
   return `[Uni-Übung] Sitzungskontext aus dem Lernhub (eingefügt, nicht vom Lernenden geschrieben).
 Freies Üben über den bisher gelernten Stoff. Übersicht der Themen (ueben.py):
 
 ${uebersicht}
 
-Lass uns üben: Stell mir Aufgaben zu dem, was ich in diesem Kurs schon gelernt habe.`;
+Lass uns üben: Stell mir Aufgaben zu dem, was ich in diesem Kurs schon gelernt habe.${leise ? '\n\n' + LEISE_REGELN : ''}`;
+}
+
+// Leise-Modus: Optionen einer Aufgabe, nur wenn sie vollständig sind (2–4 Optionen und ein gültiger Index)
+function auswahl(x) {
+  const o = (Array.isArray(x.optionen) ? x.optionen : []).map((v) => String(v).trim()).filter(Boolean).slice(0, 4);
+  return o.length >= 2 && Number.isInteger(x.richtig) && x.richtig >= 0 && x.richtig < o.length ? { optionen: o, richtig: x.richtig } : {};
 }
 
 class Ueben {
@@ -139,7 +160,7 @@ class Ueben {
     if (!s) return null;
     const { letzterAuftrag, vormerken, ...rest } = s;
     rest.verlauf = s.verlauf.map((e) => {
-      if (e.art === 'aufgabe' && e.offen) { const { musterloesung, thema, ...r } = e; return r; }
+      if (e.art === 'aufgabe' && e.offen) { const { musterloesung, thema, richtig, ...r } = e; return r; }
       return e;
     });
     return rest;
@@ -148,7 +169,7 @@ class Ueben {
   fuer(ws) { return this.sicht(this.sitzungen.get(P.nfc(ws))); }
 
   // c: { key, name, ws }
-  async starten(c, sem) {
+  async starten(c, sem, { leise = false } = {}) {
     if (!P.CLAUDE) return { ok: false, text: 'claude nicht gefunden (~/.local/bin/claude).' };
     if (process.env.LERNHUB_TEST && !process.env.LERNHUB_CLAUDE) return { ok: false, text: 'Im Test nur mit claude-Attrappe (LERNHUB_CLAUDE).' };
     if (!P.unterRoot(c.ws)) return { ok: false, text: 'Lernbereich liegt nicht im Studienordner.' };
@@ -159,7 +180,7 @@ class Ueben {
     const s = {
       id: crypto.randomUUID(), sessionId: crypto.randomUUID(), gestartet: false,
       kurs: c.key, kursName: c.name || c.key, ws, sem, start: Date.now(),
-      zustand: 'denkt', fehler: null, verlauf: [], vormerken: '',
+      zustand: 'denkt', fehler: null, verlauf: [], vormerken: '', leise: !!leise, leiseRegeln: !!leise,
       stat: { aufgaben: 0, geloest: 0, hinweise: 0, weiter: 0, aufgegeben: 0, verworfen: 0 },
     };
     this.sitzungen.set(ws, s);
@@ -168,15 +189,18 @@ class Ueben {
     try { uebersicht = (await B.lauf(P.PYTHON, [B.skript('ueben.py'), ws], { timeout: 30000 })).trim(); }
     catch (e) { uebersicht = '(Übersicht nicht verfügbar: ' + e.message + ')'; }
     s.uebersicht = uebersicht.split('\n')[0];
-    this.zug(s, startText(uebersicht));
+    this.zug(s, startText(uebersicht, !!leise));
     return { ok: true, id: s.id };
   }
 
   // art: denken (Feld „Deine Gedanken“ bei offener Aufgabe) | text (Pause) | weiter (Nächste Aufgabe)
-  senden(ws, art, text = '') {
+  //      | wahl (Leise-Modus: Option x.wahl der offenen Aufgabe; die App bewertet sofort, Claude urteilt im Zug)
+  // x.leise: vom iPhone, true/false; ohne Angabe (Mac) bleibt der Modus der Runde.
+  senden(ws, art, text = '', x = {}) {
     const s = this.sitzungen.get(P.nfc(ws));
     if (!s) return { ok: false, text: 'Keine Übungsrunde offen.' };
     if (s.zustand === 'denkt') return { ok: false, text: 'Claude antwortet noch.' };
+    if (art === 'wahl') return this.wahl(s, x);
     if (!EINGABE[art]) return { ok: false, text: 'Unbekannte Eingabe.' };
     text = String(text || '').trim().slice(0, 6000);
     const offen = this.offeneAufgabe(s);
@@ -186,8 +210,36 @@ class Ueben {
     s.verlauf.push({ von: 'ich', art, text, t: Date.now() });
     const vor = s.vormerken ? s.vormerken + '\n\n' : '';
     s.vormerken = '';
-    this.zug(s, vor + EINGABE[art](text));
+    this.zug(s, vor + EINGABE[art](text) + this.leiseZusatz(s, x.leise));
     return { ok: true };
+  }
+
+  // Leise-Modus: Er tippt eine Option an. Richtig oder Falsch sieht er sofort (Eintrag im Verlauf), die richtige
+  // Option erst mit dem Abschluss. Claude bekommt Wahl, Versuch und Ergebnis und schließt ab oder gibt einen Hinweis.
+  wahl(s, x) {
+    const a = this.offeneAufgabe(s);
+    if (!a || !a.optionen || !a.optionen.length) return { ok: false, text: 'Keine offene Aufgabe mit Auswahl.' };
+    const i = Number(x.wahl);
+    if (!Number.isInteger(i) || i < 0 || i >= a.optionen.length) return { ok: false, text: 'Erst eine Option wählen.' };
+    const vorher = s.verlauf.filter((v) => v.art === 'wahl' && v.nr === a.nr);
+    if (vorher.some((v) => v.wahl === i)) return { ok: false, text: 'Diese Option hattest du schon.' };
+    const ok = i === a.richtig, versuch = vorher.length + 1;
+    const text = String(x.text || '').trim().slice(0, 2000);
+    s.verlauf.push({ von: 'ich', art: 'wahl', nr: a.nr, wahl: i, korrekt: ok, versuch, text, t: Date.now() });
+    const vor = s.vormerken ? s.vormerken + '\n\n' : '';
+    s.vormerken = '';
+    const zeit = Math.max(1, Math.round((Date.now() - (vorher.length ? vorher[vorher.length - 1].t : a.t || Date.now())) / 1000));
+    this.zug(s, `${vor}Gewählt (Versuch ${versuch}): ${BUCHSTABE(i)}) „${a.optionen[i]}“ → ${ok ? 'RICHTIG' : `FALSCH (richtig wäre ${BUCHSTABE(a.richtig)})`}.`
+      + `${text ? '\nDeine Gedanken:\n' + text : ''}\nAntwortzeit: ${zeit} s\n[Die App hat ihm ${ok ? 'Richtig' : 'Falsch'} gezeigt, die richtige Option noch nicht.]` + this.leiseZusatz(s, x.leise));
+    return { ok: true, korrekt: ok };
+  }
+
+  leiseZusatz(s, leise) {
+    const an = leise == null ? !!s.leise : !!leise, vorher = !!s.leise;
+    s.leise = an;
+    if (an && !s.leiseRegeln) { s.leiseRegeln = true; return '\n\n' + LEISE_REGELN; }
+    if (an) return '\n' + LEISE_KURZ;
+    return vorher ? '\n' + LEISE_AUS : '';
   }
 
   // Esc: offene Aufgabe ohne Lösung verwerfen. Kein Zug; Claude erfährt es mit der nächsten Nachricht.
@@ -274,7 +326,7 @@ class Ueben {
       if (String(x.text || '').trim()) s.verlauf.push({ von: 'claude', art: 'text', text: x.text.trim(), t });
       s.stat.aufgaben++;
       s.verlauf.push({ von: 'claude', art: 'aufgabe', offen: true, nr: s.stat.aufgaben, aufgabe: x.aufgabe.trim(),
-        modus: x.modus || '', thema: x.thema || '', musterloesung: String(x.musterloesung || '').trim(), t });
+        modus: x.modus || '', thema: x.thema || '', musterloesung: String(x.musterloesung || '').trim(), ...auswahl(x), t });
       return;
     }
     if (x.art === 'abschluss' && offen) {
@@ -285,7 +337,7 @@ class Ueben {
       offen.offen = false;
       const e = { von: 'claude', art: 'abschluss', nr: offen.nr, ergebnis: erg, urteil: String(x.urteil || '').trim(),
         stufe, fehlerart: x.fehlerart && x.fehlerart !== 'keine' ? x.fehlerart : null, wiederholen: !!x.wiederholen,
-        thema: offen.thema, modus: offen.modus, musterloesung: offen.musterloesung, t };
+        thema: offen.thema, modus: offen.modus, musterloesung: offen.musterloesung, ...(offen.optionen ? { optionen: offen.optionen, richtig: offen.richtig } : {}), t };
       s.stat[erg] = (s.stat[erg] || 0) + 1;
       if (offen.thema) {
         const log = erg === 'weiter' ? 'aufgegeben' : erg;
@@ -304,4 +356,4 @@ class Ueben {
   }
 }
 
-module.exports = { Ueben, SCHEMA, systemPrompt, EINGABE };
+module.exports = { Ueben, SCHEMA, systemPrompt, EINGABE, LEISE_REGELN };

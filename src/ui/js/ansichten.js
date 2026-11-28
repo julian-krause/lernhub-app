@@ -8,6 +8,7 @@ import * as U from './ueben.js';
 import * as Sy from './sync.js';
 import * as Sp from './spiel.js';
 import * as Sh from './sprechstunde.js';
+import * as Hy from './handy.js';
 
 // Zustand einer Roadmap-Lektion für die Anzeige: erledigt, offen (geplant) oder wartet auf Material
 const zustand = (l) => (l.state === 'erledigt' ? 'erledigt' : l.state === 'Material folgt' ? 'ph' : 'geplant');
@@ -446,6 +447,7 @@ export function einstellungen(e, info) {
         <p class="muted">Modell nova-3, Sprache Deutsch. Ton geht direkt an Deepgram, nur während du diktierst.</p>
       </div></div>
     ${Sh.einstellungenKarte(e)}
+    ${Hy.karte()}
     <div class="card"><h3>${ico('link')}Verbindung</h3><dl class="kv">
       <dt>Studienordner</dt><dd class="sel">${esc(info.root || 'nicht gefunden (kurs-tutor: KURSTUTOR_ROOT)')}</dd>
       <dt>Semester</dt><dd class="sel">${esc(S.d ? S.d.semester.path : '')}</dd>

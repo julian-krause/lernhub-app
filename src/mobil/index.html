@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Lernhub">
+<meta name="format-detection" content="telephone=no">
+<meta name="theme-color" content="#fffff8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1b1a17" media="(prefers-color-scheme: dark)">
+<link rel="apple-touch-icon" href="/icon-180.png">
+<link rel="manifest" id="manifest" href="/manifest.webmanifest">
+<script>
+  // Der Schlüssel muss im Manifest stehen, bevor iOS es liest: Die Web-App auf dem Home-Bildschirm hat eigenen Speicher
+  (function () {
+    // gespeichert wird ein Schlüssel erst, wenn der Mac ihn bestätigt hat (app.js)
+    var t = new URLSearchParams(location.search).get('t');
+    try { t = t || localStorage.getItem('lh-token'); } catch (e) { }
+    if (t) document.getElementById('manifest').href = '/manifest.webmanifest?t=' + encodeURIComponent(t);
+  })();
+</script>
+<link rel="stylesheet" href="/bs.css">
+<link rel="stylesheet" href="/m/mobil.css">
+<title>Lernhub</title>
+</head>
+<body>
+<div id="app"><div class="laden"><div class="punkte"><i></i><i></i><i></i></div></div></div>
+<div id="toast" role="status" aria-live="polite"></div>
+<script type="module" src="/m/app.js"></script>
+</body>
+</html>

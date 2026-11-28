@@ -7,8 +7,9 @@
   "private": true,
   "scripts": {
     "start": "electron .",
-    "test": "node tests/spiel.test.mjs && node tests/bilder.test.mjs && node tests/e2e.mjs && node tests/lernen.test.mjs && node tests/unendlich.test.mjs && node tests/ueben.test.mjs && node tests/sync.test.mjs && node tests/sprechstunde.test.mjs",
+    "test": "node tests/spiel.test.mjs && node tests/bilder.test.mjs && node tests/e2e.mjs && node tests/lernen.test.mjs && node tests/unendlich.test.mjs && node tests/ueben.test.mjs && node tests/sync.test.mjs && node tests/sprechstunde.test.mjs && node tests/handy.test.mjs",
     "test:sprechstunde": "node tests/sprechstunde.test.mjs",
+    "test:handy": "node tests/handy.test.mjs",
     "test:lernen": "node tests/lernen.test.mjs",
     "test:bilder": "node tests/bilder.test.mjs",
     "test:bilder-live": "node tests/bilder-live.mjs",

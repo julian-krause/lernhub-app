@@ -7,6 +7,8 @@ Der Lernhub als Desktop-App. Gelernt wird in zwei Modi, beide mit eigener Ansich
 
 Dazu Wochenpensum, Fortschritt, Lernzeit, nächster Lerntag mit Kalender-Abgleich und der ILIAS-Sync per Knopf. Diktieren läuft über Deepgram.
 
+**Auch am iPhone:** Lernen und Wiederholen als Web-App auf dem Home-Bildschirm, über Tailscale mit dem Mac verbunden. Mit **Leise-Modus** für unterwegs: nur Auswahlfragen, Antippen statt Tippen, Schnellknöpfe statt Rückfragen, keine Töne. Siehe [docs/handy.md](docs/handy.md).
+
 Seit v2.0 (18.11.2026) gibt es in der App keine HTML-Lektionen mehr: kein Lektions-Fenster, kein „Erstellen“, kein „Weitermachen“, kein „Wochenstart“, keine Lernanalyse (Laut denken).
 
 **Voraussetzungen:** macOS, Node, Claude Code (`claude`, läuft über das Abo) und die Skills `kurs-tutor` (Roadmaps, `hub.py`, `lernen.py`, `ueben.py`; liegt nicht in diesem Repo) und [`ilias-sync`](https://github.com/julian-krause/ilias-sync) unter `~/.claude/skills/`. Ohne `kurs-tutor` und einen Semesterordner mit Lernbereichen zeigt die App nichts an; auch die Tests arbeiten auf einer Kopie dieses Ordners.
@@ -123,6 +125,14 @@ Lernhub macht aus Lernen und Wiederholen ein Spiel, ohne am Unterricht etwas zu 
 - *Erinnerungen:* Mitteilung, wenn heute ein Lernblock aus dem Kalender beginnt (nur Uhrzeit), und abends ab 19 Uhr, wenn die Wochenserie knapp wird (im Test aus).
 - Einmal zur Begrüßung zeigt Lernhub den Stand aus dem bisherigen Verlauf. Maskottchen ist eine Flamme mit Gesicht (froh, müde, jubelnd). Töne sind leise WebAudio-Oszillatoren; unter „Bewegung reduzieren“ bewegt sich nichts.
 
+## iPhone und Leise-Modus
+
+Einrichten: Einstellungen → **iPhone** → „Im Tailnet freigeben“ → „Link kopieren“ → am iPhone in Safari öffnen → „Zum Home-Bildschirm“. Claude läuft weiter auf dem Mac (Lernhub muss offen sein), das iPhone ist eine zweite Oberfläche für dieselben Sitzungen.
+
+- **Leise-Modus** (Standard am iPhone, Schalter oben rechts): Claude stellt nur Auswahlfragen, beim Wiederholen Aufgaben mit vier Optionen. Antworten mit zwei Tippern (Option, dann „Wie sicher?“), Rückfragen über Schnellknöpfe. Freie Fragen deckst du auf und schätzt dich selbst ein. Keine Töne.
+- **Normal:** dazu das Textfeld; diktiert wird über das Mikrofon der iOS-Tastatur.
+- Server `src/main/handy.js` (nur 127.0.0.1:4791, ins Tailnet über `tailscale serve` auf Port 8443, Schlüssel in `handy.json`), App `src/mobil/`. Details: [docs/handy.md](docs/handy.md). Test: `node tests/handy.test.mjs`.
+
 ## Diktieren
 
 Der Knopf „Diktieren“ im Feld von Lernen und Wiederholen oder ⌘⇧L startet Deepgram (Kanal `diktat:start/stopp/ton`, `diktat:status/text`). Fertige Sätze gehen ins Feld, der Zwischentext steht kursiv darunter. Esc beendet zuerst das Diktieren. Verlässt du die Ansicht, endet es.
@@ -172,6 +182,7 @@ Lernhub rechnet nichts selbst. Quelle bleibt `roadmap.json` je Kurs. Den Studien
 | `src/ui/js/lernen.js`, `ueben.js`, `sync.js` | Karten und Ansichten der beiden Modi, Sync-Karte |
 | `src/ui/js/aufnahme.js` | Mikrofon → Hauptprozess (Diktieren) |
 | `src/ui/js/regeln.js`, `spiel.js`, `effekte.js` | Spielregeln (rein), Spielstand und Spiel-Oberfläche, Töne und Konfetti |
+| `src/main/handy.js`, `src/mobil/`, `src/ui/js/handy.js` | iPhone: Server im Tailnet, die Web-App, Karte „iPhone“ in den Einstellungen |
 
 ## Tests
 
@@ -187,6 +198,7 @@ node tests/lernen.test.mjs       #   Lernen: Gespräch, Bewertung, XP und Combo,
 node tests/unendlich.test.mjs    #   Unendlich: ohne Uhr, Vorausdenken, Eintragen im Hintergrund, ein Verlauf, Comeback-Frage, Übergabe, Rückblick, Moduswechsel
 node tests/ueben.test.mjs        #   Wiederholen: Runde, Hinweis, Abschluss mit XP, Verwerfen, Endloslauf über alle Kurse, „Nur 5 Minuten“
 node tests/sync.test.mjs         #   ILIAS-Sync: Freigaben, Fortschritt, Ergebnis, fehlende Zugangsdaten, Abbrechen
+node tests/handy.test.mjs        #   iPhone: Server, Schlüssel, Lernen und Wiederholen im Leise-Modus, Eintragen, XP am Mac
 E2E_BILDER=<Ordner> npm test    # legt dazu Bildschirmfotos ab (Übersicht, Lernen mit Feier, Wiederholen)
 npm run test:live                # Diktieren mit gebauter App und echtem Deepgram (braucht gespeicherten Schlüssel und eine eigene Aufnahme tests/audio/diktat.wav, die nicht im Repo liegt)
 LERNHUB_APP=~/Applications/Lernhub.app/Contents/MacOS/Electron node tests/e2e.mjs   # Übersicht gegen die gebaute App

@@ -49,5 +49,13 @@ fi
 rm -rf "$DEST"
 mkdir -p "$HOME/Applications"
 cp -R "$OUT" "$DEST"
-/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister -f "$DEST"
+LSREG=/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister
+"$LSREG" -f "$DEST"
+# Die Zwischenkopie in build/ weg: Sonst stehen in Launchpad und Spotlight zwei Lernhubs (läuft sie gerade, erst danach)
+"$LSREG" -u "$OUT" 2>/dev/null || true
+if pgrep -f "$OUT/Contents/MacOS/Electron" >/dev/null; then
+  (while pgrep -f "$OUT/Contents/MacOS/Electron" >/dev/null; do sleep 5; done; rm -rf "$OUT") >/dev/null 2>&1 &
+else
+  rm -rf "$OUT"
+fi
 echo "Installiert: $DEST ($VERSION)"

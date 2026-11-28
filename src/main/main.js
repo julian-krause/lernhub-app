@@ -2,7 +2,7 @@
 //   Fenster mit Seitenleiste (app://ui/…), Brücke zu den kurs-tutor-Skripten, die beiden Lernmodi „Lernen“ und
 //   „Wiederholen“ (Sitzungen über claude -p), die Sprechstunde (Wiederholen per Sprache, GPT-Live), der ILIAS-Sync
 //   (claude -p) und das Diktieren (Deepgram).
-const { app, BrowserWindow, Menu, ipcMain, protocol, session, shell, systemPreferences, net, Notification, powerSaveBlocker } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, protocol, session, shell, systemPreferences, net, Notification, powerSaveBlocker, clipboard } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { pathToFileURL, fileURLToPath } = require('url');
@@ -22,6 +22,7 @@ const { Ueben } = require('./ueben');
 const { Lernen } = require('./lernen');
 const { Sync } = require('./sync');
 const { Sprechstunde } = require('./sprechstunde');
+const { Handy, schlank } = require('./handy');
 
 const UI = path.join(__dirname, '..', 'ui');
 
@@ -33,7 +34,13 @@ let win = null;
 let daten = null;                 // letzte hub.py-Daten
 let stopSem = null;
 
-const an = (kanal, wert) => { if (win && !win.isDestroyed()) win.webContents.send(kanal, wert); };
+// An die Mac-Oberfläche und an verbundene iPhones (handy.js): Sitzungen, neue Daten und Meldungen
+const FURS_HANDY = new Set(['lernen', 'ueben', 'daten:geaendert', 'meldung']);
+let handy = null;
+const an = (kanal, wert) => {
+  if (win && !win.isDestroyed()) win.webContents.send(kanal, wert);
+  if (handy && FURS_HANDY.has(kanal)) handy.senden(kanal, wert);
+};
 
 // ---------------------------------------------------------------- Daten
 // hub.py kann dauern (iCloud lädt ausgelagerte Dateien nach). Damit das Fenster nie bei „Lade …“ hängt:
@@ -225,7 +232,8 @@ function ipc() {
   ipcMain.handle('ueben:uebersicht', () => Object.fromEntries(kurse().map((c) => [c.key, ueb.fuer(c.ws)])));
   ipcMain.handle('ueben:stand', mitKurs((c) => ueb.fuer(c.ws), null));
   ipcMain.handle('ueben:starten', mitKurs((c) => ueb.starten(c, daten.semester.path)));
-  ipcMain.handle('ueben:senden', mitKurs((c, x) => ueb.senden(c.ws, x.art, x.text)));
+  // Am Mac wird geschrieben und diktiert: kein Leise-Modus (eine Runde vom iPhone schaltet ihn hier aus)
+  ipcMain.handle('ueben:senden', mitKurs((c, x) => ueb.senden(c.ws, x.art, x.text, { ...x, leise: false })));
   ipcMain.handle('ueben:verwerfen', mitKurs((c) => ueb.verwerfen(c.ws)));
   ipcMain.handle('ueben:nochmal', mitKurs((c) => ueb.nochmal(c.ws)));
   ipcMain.handle('ueben:beenden', mitKurs((c) => ueb.beenden(c.ws)));
@@ -267,11 +275,19 @@ function ipc() {
   ipcMain.handle('lernen:starten', mitKurs((c, x) => lern.starten(c, daten.semester.path, { unendlich: !!(x && x.unendlich), fortsetzen: !!(x && x.fortsetzen) })));
   ipcMain.handle('lernen:nachtragen', (_e, id) => lern.nachtragen(String(id || '')));
   ipcMain.handle('lernen:vorbereiten', mitKurs((c) => lern.vorbereiten(c, daten.semester.path)));
-  ipcMain.handle('lernen:senden', mitKurs((c, x) => lern.senden(c.ws, x.art, x.x || {})));
+  ipcMain.handle('lernen:senden', mitKurs((c, x) => lern.senden(c.ws, x.art, { ...(x.x || {}), leise: false })));
   ipcMain.handle('lernen:nochmal', mitKurs((c) => lern.nochmal(c.ws)));
   ipcMain.handle('lernen:beenden', mitKurs((c) => lern.beenden(c.ws)));
   ipcMain.handle('lernen:eintragen', mitKurs((c) => lern.eintragen(c.ws)));
   ipcMain.handle('lernen:uhr', mitKurs((c, x) => lern.uhrStellen(c.ws, !!x.offen)));
+  ipcMain.handle('lernen:aufdecken', mitKurs((c) => lern.aufdecken(c.ws)));
+
+  // iPhone (handy.js): Status, Freigabe im Tailnet, Link in die Zwischenablage (über Handoff auch aufs iPhone)
+  ipcMain.handle('handy:info', async (e, pruefen) => { if (!handy) return null; if (pruefen) await handy.tailscalePruefen(); return handy.info(); });
+  ipcMain.handle('handy:freigeben', () => (handy ? handy.freigeben() : { ok: false, text: 'Der iPhone-Server läuft nicht.' }));
+  ipcMain.handle('handy:aufheben', () => (handy ? handy.freigabeAufheben() : null));
+  ipcMain.handle('handy:neu', () => (handy ? handy.neuerSchluessel() : null));
+  ipcMain.handle('handy:kopieren', () => { const i = handy && handy.info(); if (!i || !i.link) return false; clipboard.writeText(i.link); return true; });
 
   ipcMain.handle('sync:stand', () => sync.stand());
   ipcMain.handle('sync:starten', () => {
@@ -319,6 +335,59 @@ function ipc() {
     n.show();
     return true;
   });
+}
+
+// ---------------------------------------------------------------- iPhone (handy.js)
+// Dieselben Funktionen wie die IPC-Kanäle, als POST /api/<name>. Jeder Aufruf antwortet, nie mit einer Ausnahme.
+function handyApi() {
+  const spielDatei = () => path.join(app.getPath('userData'), 'spiel.json');
+  const k = (fn, leer = { ok: false, text: 'Kurs nicht gefunden.' }) => async (b) => {
+    if (!daten) await datenLaden().catch(() => null);
+    const c = kursVon(b && b.key);
+    return c ? fn(c, b) : leer;
+  };
+  const lernStand = (c) => ({ sitzung: lern.fuer(c.ws), ziel: lern.ziel(c) });
+  const api = {
+    daten: async () => ({ daten: schlank(await datenLaden()), mac: { version: app.getVersion(), test: !!process.env.LERNHUB_TEST } }),
+    spiel: () => { try { return JSON.parse(fs.readFileSync(spielDatei(), 'utf8')); } catch { return null; } },
+    'lernen:uebersicht': async () => { if (!daten) await datenLaden().catch(() => null); return Object.fromEntries(kurse().map((c) => [c.key, lernStand(c)])); },
+    'lernen:stand': k(lernStand, null),
+    // Am iPhone immer als einzelne Lektion: Eine Lektion aus dem Unendlich-Modus läuft hier mit Uhr und Rückschau weiter
+    'lernen:starten': k((c, b) => lern.starten(c, daten.semester.path, { fortsetzen: true, leise: !!b.leise })),
+    'lernen:senden': k((c, b) => lern.senden(c.ws, String(b.art || ''), { ...(b.x || {}), leise: !!b.leise })),
+    'lernen:aufdecken': k((c) => lern.aufdecken(c.ws)),
+    'lernen:nochmal': k((c) => lern.nochmal(c.ws)),
+    'lernen:beenden': k((c) => lern.beenden(c.ws)),
+    'lernen:eintragen': k((c) => lern.eintragen(c.ws)),
+    'lernen:uhr': k((c, b) => lern.uhrStellen(c.ws, !!b.offen)),
+    // Rückgängig wie am Mac: kurstutor://undone, danach die Sitzung schließen
+    'lernen:zurueck': k(async (c) => {
+      const s = lern.fuer(c.ws);
+      if (!s || s.zustand !== 'erledigt' || !s.ergebnis || !s.ergebnis.datei) return { ok: false, text: 'Nichts zurückzunehmen.' };
+      await kurstutor('kurstutor://undone?lesson=' + encodeURIComponent(s.ergebnis.datei)).catch(() => null);
+      lern.beenden(c.ws);
+      return { ok: true };
+    }),
+    'ueben:uebersicht': async () => { if (!daten) await datenLaden().catch(() => null); return Object.fromEntries(kurse().map((c) => [c.key, ueb.fuer(c.ws)])); },
+    'ueben:stand': k((c) => ueb.fuer(c.ws), null),
+    'ueben:starten': k((c, b) => ueb.starten(c, daten.semester.path, { leise: !!b.leise })),
+    'ueben:senden': k((c, b) => ueb.senden(c.ws, String(b.art || ''), b.text, { wahl: b.wahl, text: b.text, leise: !!b.leise })),
+    'ueben:verwerfen': k((c) => ueb.verwerfen(c.ws)),
+    'ueben:nochmal': k((c) => ueb.nochmal(c.ws)),
+    'ueben:beenden': k((c) => ueb.beenden(c.ws)),
+    neuLaden: () => { geaendert(); return { ok: true }; },
+  };
+  for (const [n, fn] of Object.entries(api)) {
+    api[n] = async (b) => { try { return await fn(b); } catch (err) { console.error('Handy ' + n + ':', err); return { ok: false, text: 'Fehler auf dem Mac: ' + kurz(err) }; } };
+  }
+  return api;
+}
+function handyStarten() {
+  // Im Test nur mit eigenem Port (tests/handy.test.mjs), damit er nie mit der installierten App kollidiert
+  if (process.env.LERNHUB_TEST && !process.env.LERNHUB_HANDY_PORT) return;
+  if (process.env.LERNHUB_HANDY === '0') return;
+  handy = new Handy({ ordner: app.getPath('userData'), port: +process.env.LERNHUB_HANDY_PORT || 4791, api: handyApi(), darf: (p) => P.unterRoot(p) });
+  handy.start();
 }
 
 // ---------------------------------------------------------------- Fenster
@@ -398,6 +467,7 @@ app.whenReady().then(async () => {
 
   modiBereit();
   ipc();
+  handyStarten();
   menue();
   fenster();
   icloudVorrat();
@@ -416,6 +486,7 @@ app.on('before-quit', () => {
   if (sync) sync.abbrechen();                 // schon geladene Dateien bleiben, der nächste Lauf macht weiter
   if (diktat) diktatStopp().catch(() => { });
   if (sprech) sprech.aus();                   // Live-Sitzung schließen, Lernzeit buchen
+  if (handy) handy.stopp();
   wachHalten(false);
 });
 app.on('window-all-closed', () => { app.quit(); });

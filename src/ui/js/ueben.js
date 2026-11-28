@@ -226,10 +226,14 @@ function eintrag(e, s) {
   if (e.von === 'ich') {
     if (e.art === 'weiter') return `<div class="ueb-weiter">→ Nächste Aufgabe</div>`;
     if (e.art === 'denken') return `<div class="ueb-ich"><div class="ueb-gedanken"><div class="ueb-eyebrow">Deine Gedanken</div><div class="ueb-prose sel">${md(e.text)}</div></div></div>`;
+    // Leise-Modus (iPhone): angetippte Option, von der App bewertet
+    if (e.art === 'wahl') return `<div class="ueb-ich"><div class="ueb-gedanken"><div class="ueb-eyebrow">Gewählt am iPhone <span class="chip ${e.korrekt ? 'ok' : 'bad'}">${e.korrekt ? 'Richtig' : 'Falsch'}</span></div><div class="ueb-prose sel">${String.fromCharCode(65 + e.wahl)})${e.text ? ' · ' + md(e.text) : ''}</div></div></div>`;
     return `<div class="ueb-ich"><div class="ueb-blase sel">${md(e.text)}</div></div>`;
   }
   if (e.art === 'aufgabe') {
-    return `<div class="ueb-karte"><div class="ueb-eyebrow">Aufgabe ${e.nr || ''}</div><div class="ueb-prose ueb-gross sel">${md(e.aufgabe)}</div></div>`;
+    // Leise-Modus (iPhone): Optionen zum Nachlesen; am Mac antwortest du wie immer im Feld (etwa „B, weil …“)
+    const opts = e.optionen && e.optionen.length ? `<ol class="ueb-liste" type="A" style="list-style: upper-alpha; padding-left: 22px; margin-top: 8px">${e.optionen.map((o) => `<li>${md(o).replace(/^<p>|<\/p>$/g, '')}</li>`).join('')}</ol>` : '';
+    return `<div class="ueb-karte"><div class="ueb-eyebrow">Aufgabe ${e.nr || ''}</div><div class="ueb-prose ueb-gross sel">${md(e.aufgabe)}</div>${opts}</div>`;
   }
   if (e.art === 'abschluss') {
     if (e.ergebnis === 'verworfen') return `<div class="ueb-leise">Aufgabe verworfen.</div>`;

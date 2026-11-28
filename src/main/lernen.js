@@ -125,7 +125,7 @@ ${strom ? `Unendlich-Modus: kein Zeitbudget, höchstens ${s.maxSchritte} Schritt
 ${kontext}
 
 Fang an: Plan im Feld plan, dann sofort der erste Schritt mit seiner Frage. Der Lernende sieht diesen Kontext nicht: Alles, was er braucht, steht in deinen Nachrichten.${strom ? '\n' + stromEinstieg(s) : ''}
-${strom ? '[Unendlich-Modus]' : `[Lektionsuhr: 0 von ${s.budget} Min.]`}`;
+${strom ? '[Unendlich-Modus]' : `[Lektionsuhr: 0 von ${s.budget} Min.]`}${s.leise ? '\n' + LEISE_REGELN : ''}`;
 }
 
 // Unendlich-Modus: Für den Lernenden gibt es keine Lektionen, nur ein durchgehendes Gespräch. Die Regeln stehen im
@@ -154,6 +154,19 @@ function stromEinstieg(s) {
   const kurs = v.kursName && v.kursName !== s.kursName;
   return `[Unendlich-Modus] Direkt davor ging es im selben Gespräch um „${v.title}“${v.letzter ? ` (zuletzt: ${v.letzter})` : ''}${kurs ? `, im Kurs ${v.kursName}` : ''}. Direkt über deiner Nachricht steht die Auflösung seiner letzten Antwort von dort. Dein erster Zug ist einfach der nächste Schritt dieses Gesprächs: keine Lektionsnummer, kein Gruß, keine Ankündigung; knüpf in einem Halbsatz an, wo es passt${kurs ? `, und lass den Wechsel zu ${s.kursName} beiläufig erkennen (ein Halbsatz)` : ''}.`;
 }
+
+// Leise-Modus (iPhone-App, docs/handy.md): Der Lernende ist unterwegs, kann nicht diktieren und tippt ungern. Die
+// Regeln gehen einmal je Sitzung mit seiner ersten Nachricht im Leise-Modus mit (wie STROM_WECHSEL), danach nur noch
+// die Marke. So bleibt der Systemprompt gleich, und der Modus lässt sich mitten in der Lektion umschalten.
+const LEISE_REGELN = `[Leise-Modus, Regeln bis auf Widerruf:]
+Der Lernende lernt gerade am iPhone, leise und unterwegs: Er kann nicht diktieren und tippt ungern.
+- **Nur Auswahlfragen:** Jede Frage, auch eine Vorhersage, ist eine Auswahlfrage mit genau 4 Optionen. Keine freie Frage. Was du sonst frei fragen würdest (erklären, begründen, rechnen, Code lesen), stellst du als Auswahl: „Welche Begründung trifft zu?“, „Welches Ergebnis kommt heraus?“, „Welche Zeile ist falsch?“, „Was fehlt im Satz?“.
+- **Antworten per Tippen:** Er wählt eine Option und tippt seine Sicherheit an. „Gedanken“ fehlen meist; lies seinen Stand aus Wahl, Sicherheit, Antwortzeit und Stand.
+- **Knöpfe statt Text:** Rückfragen kommen oft als vorgefertigte Knöpfe („Einfacher erklären“, „Noch ein Beispiel“, „Warum ist das so?“, „Ich verstehe die Frage nicht“). Behandle sie wie seine eigene Rückfrage: kurz, gezielt, die offene Frage bleibt offen.
+- **Fürs Handy schreiben:** kurze Absätze, Tabellen höchstens 3 Spalten, Codeblöcke kurz und schmal (höchstens etwa 40 Zeichen je Zeile).
+[Leise-Modus]`;
+const LEISE_KURZ = '[Leise-Modus]';
+const LEISE_AUS = '[Leise-Modus aus: Er kann wieder schreiben und diktieren, freie Fragen sind wieder erlaubt.]';
 
 // Erste Nachricht nach einer gerade eingetragenen Lektion desselben Kurses (Unendlich-Modus)
 function uebergabeText(u) {
@@ -257,7 +270,8 @@ class Lernen {
     if (!s) return null;
     const { letzterAuftrag, sessionId, ...rest } = s;
     rest.verlauf = s.verlauf.map((e) => {
-      if (e.art === 'frage' && !e.aufgedeckt) { const { richtig, loesung, erklaerung, korrekt, ...r } = e; return r; }
+      if (e.art === 'frage' && !e.aufgedeckt && !e.gezeigt) { const { richtig, loesung, erklaerung, korrekt, ...r } = e; return r; }
+      if (e.art === 'frage' && !e.aufgedeckt) { const { richtig, korrekt, ...r } = e; return r; }       // Leise-Modus: Lösung gezeigt, noch nicht eingeschätzt
       return e;
     });
     rest.min = s.ergebnis ? s.ergebnis.min : this.minuten(s);
@@ -271,7 +285,7 @@ class Lernen {
   danach(c) { const s = this.sitzungen.get(P.nfc(c.ws)); return this.ziel(c, { ohne: s && s.zustand !== 'erledigt' ? [s.lektion.id] : [] }); }
 
   // ---------------------------------------------------------------- Start
-  async starten(c, sem, { unendlich = false, fortsetzen = false } = {}) {
+  async starten(c, sem, { unendlich = false, fortsetzen = false, leise } = {}) {
     if (!P.CLAUDE) return { ok: false, text: 'claude nicht gefunden (~/.local/bin/claude).' };
     if (process.env.LERNHUB_TEST && !process.env.LERNHUB_CLAUDE) return { ok: false, text: 'Im Test nur mit claude-Attrappe (LERNHUB_CLAUDE).' };
     if (!P.unterRoot(c.ws)) return { ok: false, text: 'Lernbereich liegt nicht im Studienordner.' };
@@ -294,6 +308,7 @@ class Lernen {
     if (v && v.lektion.id === l.id && v.regelstand === regelstand()) return this.uebernehmen(ws, v, ueb, unendlich);
     if (v) this.vorabVerwerfen(ws);
     const s = this.neu(c, sem, l, { unendlich });
+    if (leise) { s.leise = true; s.leiseRegeln = true; }            // die Regeln stehen im ersten Zug (startText)
     if (ueb) s.uebergabe = ueb;
     if (unendlich) s.vorher = this.stromVorher();
     this.sitzungen.set(ws, s);
@@ -395,12 +410,23 @@ class Lernen {
     return { ok: true };
   }
 
-  uhr(s) {
+  uhr(s, leise) {
     const st = s.stat.fragen ? `\n[Stand: ${Math.round(s.stat.punkte * 10) / 10} von ${s.stat.fragen} Prüffragen richtig]` : '';
-    if (!s.unendlich) return `${st}\n[Lektionsuhr: ${this.minuten(s)} von ${s.budget} Min.]`;
-    if (s.stromRegeln) return `${st}\n${STROM_KURZ}`;
+    const l = this.leiseZusatz(s, leise);
+    if (!s.unendlich) return `${st}\n[Lektionsuhr: ${this.minuten(s)} von ${s.budget} Min.]${l}`;
+    if (s.stromRegeln) return `${st}\n${STROM_KURZ}${l}`;
     s.stromRegeln = true;                                          // einzeln begonnen, jetzt im Strom: Regeln einmal mitschicken
-    return `${st}${STROM_WECHSEL(s)}`;
+    return `${st}${STROM_WECHSEL(s)}${l}`;
+  }
+
+  // Leise-Modus: leise kommt mit jeder Nachricht vom iPhone (true/false); ohne Angabe (Mac) bleibt der Modus, wie er ist.
+  // Erste Nachricht im Leise-Modus: die Regeln, danach nur die Marke; beim Ausschalten einmal LEISE_AUS.
+  leiseZusatz(s, leise) {
+    const an = leise == null ? !!s.leise : !!leise, vorher = !!s.leise;
+    s.leise = an;
+    if (an && !s.leiseRegeln) { s.leiseRegeln = true; return '\n' + LEISE_REGELN; }
+    if (an) return '\n' + LEISE_KURZ;
+    return vorher ? '\n' + LEISE_AUS : '';
   }
 
   // art: antwort ({ wahl, sicherheit, text, weissNicht }) | text (Rückfrage, Nachricht) | weiter | ende
@@ -437,6 +463,15 @@ class Lernen {
         } else {
           auftrag = `${kopf}: gewählt ${BUCHSTABE(i)}) „${q.optionen[i]}“ (${ok ? 'trifft zu' : `trifft nicht zu, es wäre ${BUCHSTABE(q.richtig)})`}; er sieht das noch nicht, lös es auf).${zusatz}`;
         }
+      } else if (x.selbst && q.rolle !== 'vorhersage') {
+        // Leise-Modus: Lösung aufgedeckt (aufdecken), dann selbst eingeschätzt. Die App wertet, Claude nicht mehr.
+        const urteil = ['richtig', 'teils', 'falsch'].includes(x.selbst) ? x.selbst : null;
+        if (!urteil) return { ok: false, text: 'Erst einschätzen: richtig, teils oder falsch.' };
+        if (!q.gezeigt) return { ok: false, text: 'Erst die Lösung aufdecken.' };
+        q.antwort = { selbst: urteil, sicherheit: sicher, text }; q.beantwortet = true; q.offen = false;
+        q.aufgedeckt = true; q.urteil = urteil; q.korrekt = urteil === 'richtig';
+        if (q.rolle === 'pruefung') { s.stat.fragen++; s.stat.punkte += urteil === 'richtig' ? 1 : urteil === 'teils' ? 0.5 : 0; }
+        auftrag = `${kopf}, freie Frage im Leise-Modus: Er hat die Lösung aufgedeckt, ohne zu schreiben, und sich selbst eingeschätzt: ${urteil.toUpperCase()}.${text ? '\nGedanken: ' + text : ''}${zeit}\n[Bewertet ist sie damit: setz bewertung "keine". Stell künftig Auswahlfragen.]`;
       } else {
         if (!text) return { ok: false, text: 'Erst eine Antwort schreiben.' };
         q.antwort = { text, sicherheit: sicher }; q.beantwortet = true;
@@ -458,7 +493,19 @@ class Lernen {
       s.verlauf.push({ von: 'ich', art: 'ende', t });
     } else return { ok: false, text: 'Unbekannte Eingabe.' };
     if (s.uebergabe && !s.uebergabeGesendet) { auftrag += uebergabeText(s.uebergabe); s.uebergabeGesendet = true; }
-    this.zug(s, auftrag + this.uhr(s));
+    this.zug(s, auftrag + this.uhr(s, x.leise));
+    return { ok: true };
+  }
+
+  // Leise-Modus: Lösung einer offenen freien Frage zeigen, ohne zu antworten (danach schätzt er sich selbst ein).
+  // Kein Zug: Claude erfährt es mit der Selbsteinschätzung.
+  aufdecken(ws) {
+    const s = this.sitzungen.get(P.nfc(ws));
+    const q = s && this.offeneFrage(s);
+    if (!q || !q.frei || q.beantwortet || q.rolle === 'vorhersage') return { ok: false, text: 'Keine offene freie Frage.' };
+    if (s.zustand === 'denkt') return { ok: false, text: 'Claude antwortet noch.' };
+    q.gezeigt = true;
+    this.melden(s);
     return { ok: true };
   }
 
@@ -593,7 +640,7 @@ class Lernen {
       const fragen = s.verlauf.filter((v) => v.art === 'frage' && v.beantwortet && !v.ersetzt).map((q) => ({
         rolle: q.rolle, schritt: q.schritt, frage: q.frage, korrekt: q.korrekt,
         richtig: q.frei ? q.loesung : `${BUCHSTABE(q.richtig)}) ${q.optionen[q.richtig]}`,
-        antwort: q.antwort && (q.antwort.weissNicht ? 'weiß nicht' : q.frei ? q.antwort.text : `${BUCHSTABE(q.antwort.wahl)}) ${q.optionen[q.antwort.wahl]}`),
+        antwort: q.antwort && (q.antwort.weissNicht ? 'weiß nicht' : q.antwort.selbst ? `Lösung aufgedeckt, selbst eingeschätzt: ${q.antwort.selbst}` : q.frei ? q.antwort.text : `${BUCHSTABE(q.antwort.wahl)}) ${q.optionen[q.antwort.wahl]}`),
         sicherheit: q.antwort && q.antwort.sicherheit, erklaerung: q.erklaerung,
       }));
       const heute = new Date(); const datum = `${heute.getFullYear()}-${String(heute.getMonth() + 1).padStart(2, '0')}-${String(heute.getDate()).padStart(2, '0')}`;
@@ -642,4 +689,4 @@ class Lernen {
   }
 }
 
-module.exports = { Lernen, SCHEMA, systemPrompt, startText, schritteFuer, lektionMs };
+module.exports = { Lernen, SCHEMA, systemPrompt, startText, schritteFuer, lektionMs, LEISE_REGELN };
