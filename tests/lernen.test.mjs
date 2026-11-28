@@ -73,16 +73,21 @@ try {
   await bild('1-falsch');
   check(/\+2 XP/.test(await text('.lrn-frage[data-frage="1"] .chip.xp')) && /Noch nicht|Knapp daneben|Fast|Daraus lernst/.test(await text('.lrn-frage[data-frage="1"] .lrn-lob')), 'Spiel: XP-Chip „+2 XP“ auf der Fragekarte und eine Zeile Trost');
   await win.waitForSelector('.lrn-frage[data-frage="2"].offen', { timeout: 15000 });
-  // Kein Flackern: Neuzeichnen (wie bei Hintergrund-Ereignissen) ersetzt nichts, was gleich bleibt, und Karten,
-  // die schon da waren, blenden sich nicht noch einmal ein
+  // Kein Flackern: Neuzeichnen, auch wenn sich etwas ändert (Fokus-Knopf, Neu-laden-Knopf dreht sich), ersetzt nur
+  // das Geänderte. Fragekarte, Roadmap und Seitenleiste bleiben dieselben Elemente (keine neue Einblendung).
   const flackern = await win.evaluate(async () => {
-    const T = window.__lernhubTest, k = () => document.querySelector('.lrn-frage[data-frage="1"]');
-    k().__markiert = true; document.querySelector('#sidebar').firstElementChild.__markiert = true;
-    await T.zeichnen(); await T.zeichnen(); T.seitenleiste(); T.seitenleiste();
-    const karte = k(), ruhig = karte.__markiert || (karte.classList.contains('ruhig') && getComputedStyle(karte).animationName === 'none');
-    return { ruhig, leiste: !!document.querySelector('#sidebar').firstElementChild.__markiert, neu: getComputedStyle(document.querySelector('.lrn-frage[data-frage="2"]')).animationName };
+    const T = window.__lernhubTest, $ = (s) => document.querySelector(s);
+    const teile = ['.lrn-frage[data-frage="1"]', '.lrn-roadmap', '#sidebar .side-scroll'];
+    teile.forEach((s) => { $(s).__markiert = true; });
+    const vorher = $('#ansicht').__html;
+    await T.zeichnen(); T.seitenleiste();
+    $('[data-fokus]').click(); await new Promise((r) => setTimeout(r, 50));
+    const geaendert = $('#ansicht').__html !== vorher;
+    $('[data-fokus]').click(); await new Promise((r) => setTimeout(r, 50));
+    T.S.laden = true; T.seitenleiste(); T.S.laden = false; T.seitenleiste();
+    return { geaendert, weg: teile.filter((s) => !$(s).__markiert) };
   });
-  check(flackern.ruhig && flackern.leiste, 'kein Flackern: Neuzeichnen lässt Fragekarten und Seitenleiste stehen bzw. ohne neue Einblendung');
+  check(flackern.geaendert && !flackern.weg.length, 'kein Flackern: geändertes Neuzeichnen lässt Fragekarte, Roadmap und Seitenleiste stehen' + (flackern.weg.length ? ' (ersetzt: ' + flackern.weg.join(', ') + ')' : ''));
   const z2 = zuege().find((z) => /^Antwort auf Frage 1 /.test(z.ein)).ein;
   check(/FALSCH, richtig ist B\)/.test(z2) && /Sicherheit: sicher/.test(z2) && /\[Lektionsuhr: \d+ von \d+ Min\.\]/.test(z2), 'Claude bekommt Wahl, Ergebnis, Sicherheit und die Lektionsuhr');
 

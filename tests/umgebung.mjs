@@ -65,6 +65,8 @@ print(json.dumps({"state": st, "created": created, "updated": updated, "removed"
 
 export function bereiten(semester = SEMESTER) {
   const T = process.env.LERNHUB_TESTDIR || fs.mkdtempSync(path.join(os.tmpdir(), 'lernhub-test-'));
+  // Eigene Kopie am Ende wegräumen (sonst füllen die Läufe die Platte). LERNHUB_TEST_BEHALTEN=1 lässt sie zum Ansehen liegen.
+  if (!process.env.LERNHUB_TESTDIR && !process.env.LERNHUB_TEST_BEHALTEN) process.on('exit', () => { try { fs.rmSync(T, { recursive: true, force: true }); } catch { } });
   const root = path.join(T, 'root', path.basename(ECHT_ROOT));
   const sem = path.join(root, semester);
   fs.mkdirSync(sem, { recursive: true });

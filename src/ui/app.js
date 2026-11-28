@@ -68,21 +68,45 @@ function parse(s) {
 }
 
 // ---------------------------------------------------------------- Neu zeichnen ohne Flackern
-// Hintergrund-Ereignisse (Lektion, hub.py, iCloud, Sync, Log) zeichnen oft dieselbe Ansicht neu. Gleiches HTML bleibt
-// stehen. Ist es neu, spielen Karten und Chips, die vorher schon da waren, ihre Einblend-Animation nicht noch einmal.
-// Gibt zurück, ob das DOM ersetzt wurde.
-const EINBLENDEN = ['.ueb-karte', '.combo', '.warten-tipp'];
+// Hintergrund-Ereignisse (Lektion, hub.py, iCloud, Sync, Log) und jeder Klick zeichnen dieselbe Ansicht neu. Statt
+// alles zu ersetzen, wird das neue HTML mit dem DOM abgeglichen: Nur was sich geändert hat, wird angefasst. Was
+// bleibt, behält Animation, Hover, Fokus und Scrollstand. Beim Wechsel der Ansicht wird ganz neu aufgebaut.
+// Gibt zurück, ob sich etwas geändert hat.
 function setzen(el, html, gleicheAnsicht = true) {
   if (gleicheAnsicht && el.__html === html && el.firstElementChild) return false;
-  const vorher = gleicheAnsicht ? EINBLENDEN.map((s) => [...el.querySelectorAll(s)].map((x) => x.textContent)) : null;
-  el.innerHTML = html; el.__html = html;
-  if (vorher) EINBLENDEN.forEach((s, k) => {
-    el.querySelectorAll(s).forEach((x, i) => {
-      // Karten nach Position (ihr Text ändert sich beim Aufdecken), Chips nur, wenn sie gleich geblieben sind
-      if (i < vorher[k].length && (s === '.ueb-karte' || vorher[k][i] === x.textContent)) x.classList.add('ruhig');
-    });
-  });
+  if (gleicheAnsicht && el.firstElementChild) {
+    const t = document.createElement('template'); t.innerHTML = html;
+    abgleichen(el, t.content);
+  } else el.innerHTML = html;
+  el.__html = html;
   return true;
+}
+// Kinder von alt an neu angleichen. Ein Element passt zu einem alten mit gleichem Tag, gleicher id und gleicher
+// erster Klasse (Zustandsklassen wie „offen“ oder „spin“ kommen danach) und gleichem data-neu (z. B. eine höhere
+// Combo, die neu aufploppen soll). Alte Elemente davor sind weggefallen, ohne Treffer kommt das neue hinzu. So
+// verschiebt ein Chip oder eine Leiste, die kommt oder geht, nicht alles dahinter. Treffer: Attribute und Text angleichen, tiefer gehen.
+const sig = (x) => x.nodeName + '#' + x.id + '.' + (x.classList[0] || '') + '|' + (x.getAttribute('data-neu') || '');
+function abgleichen(alt, neu) {
+  let y = alt.firstChild;
+  for (const x of [...neu.childNodes]) {
+    if (x.nodeType !== 1) {                           // Text: nur an derselben Stelle
+      if (y && y.nodeType === x.nodeType) { if (y.nodeValue !== x.nodeValue) y.nodeValue = x.nodeValue; y = y.nextSibling; }
+      else alt.insertBefore(x, y);
+      continue;
+    }
+    const s = sig(x);
+    let z = y; while (z && (z.nodeType !== 1 || sig(z) !== s)) z = z.nextSibling;
+    if (!z) { alt.insertBefore(x, y); continue; }
+    while (y !== z) { const w = y.nextSibling; y.remove(); y = w; }
+    y = z.nextSibling;
+    for (const { name } of [...z.attributes]) if (!x.hasAttribute(name)) z.removeAttribute(name);
+    for (const { name, value } of x.attributes) if (z.getAttribute(name) !== value) z.setAttribute(name, value);
+    abgleichen(z, x);
+    // Felder: Der Wert kommt aus dem HTML (Entwürfe stehen dort mit drin), wie beim Ersetzen
+    if (/^(INPUT|TEXTAREA|SELECT)$/.test(x.nodeName) && z.value !== x.value) z.value = x.value;
+    if (x.nodeName === 'INPUT' && z.checked !== x.checked) z.checked = x.checked;
+  }
+  while (y) { const w = y.nextSibling; y.remove(); y = w; }
 }
 
 // Fokus-Modus: In Lernen und Wiederholen verschwinden Seitenleiste und rechte Spalte (bleiben im DOM)
@@ -141,11 +165,12 @@ async function zeichnen() {
   const alt = el.querySelector('.view'), scroll = alt && S.route === zeichnen.letzte ? alt.scrollTop : 0;
   const neu = setzen(el, html, S.route === zeichnen.letzte);
   zeichnen.letzte = S.route;
-  const v = el.querySelector('.view'), h = el.querySelector('.head');
-  if (v && neu) {
-    v.scrollTop = scroll;
-    v.addEventListener('scroll', () => h && h.classList.toggle('scrolled', v.scrollTop > 4), { passive: true });
+  const v = el.querySelector('.view'), kopf = () => { const h = el.querySelector('.head'); if (h && v) h.classList.toggle('scrolled', v.scrollTop > 4); };
+  if (v && !v.__hoert) {                            // neu aufgebaut (ein abgeglichener Bereich behält Scroll und Listener)
+    v.__hoert = true; v.scrollTop = scroll;
+    v.addEventListener('scroll', kopf, { passive: true });
   }
+  if (neu) kopf();                                  // der Abgleich setzt die Klassen des Kopfs aus dem HTML zurück
   if (r.name === 'kurs' && r.tab === 'luecken' && c && c.hasRoadmap) lueckenLaden(c);
   if (r.name === 'einstellungen') { einstellungenVerdrahten(); Sh.einstellungenVerdrahten(); }
   if (r.name === 'kurs' && c) Sh.vorbereiten(c);              // Sprechstunde: Karten im Hintergrund bereitlegen

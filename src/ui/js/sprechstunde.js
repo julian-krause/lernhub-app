@@ -261,7 +261,8 @@ function untertitelZeigen() {
 // Kugel: Pegel aus Tutor-Ausgabe und Mikrofon (der Tutor zählt mehr), Zustand aus der Sitzung
 function kugelStarten() {
   const cv = $('#sp-kugel');
-  if (!cv) return;
+  if (!cv || cv.__kugel) return;                  // bleibt die Kugel beim Neuzeichnen stehen, läuft ihre Animation weiter
+  cv.__kugel = true;
   Kugel.starten(cv, {
     pegel: () => Math.max(lautstaerke(V.anAus) * 7, lautstaerke(V.anMic) * 3.5),
     zustand: () => {
